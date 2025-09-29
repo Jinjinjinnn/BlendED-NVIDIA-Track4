@@ -23,31 +23,40 @@ This repository uses original gaussian-splatting as a submodule. Use the followi
 git clone --recurse-submodules git@github.com:XPandora/PhysGaussian.git
 ```
 
-## Setup
+## Setup (Docker ver.)
 
-### Python Environment
-To prepare the Python environment needed to run PhysGaussian, execute the following commands:
-```shell
-conda create -n PhysGaussian python=3.9
-conda activate PhysGaussian
+This project uses Docker to provide a consistent and easy-to-use development environment. All dependencies, including the correct CUDA version, PyTorch, and C++ extensions, are managed within the Docker container.
 
-pip install -r requirements.txt
-pip install -e gaussian-splatting/submodules/diff-gaussian-rasterization/
-pip install -e gaussian-splatting/submodules/simple-knn/
-```
-By default, We use pytorch=2.0.0+cu118.
+1.  **Prerequisites**: Ensure you have Docker Desktop and the latest NVIDIA drivers installed.
+2.  **Build the Image**: Open a terminal in the project root and run:
+    ```shell
+    docker-compose build
+    ```
+    This command only needs to be run once, or whenever the `Dockerfile` is updated.
+3.  **Run the Container**: Once the build is complete, start the container:
+    ```shell
+    docker-compose up -d
+    ```
+4.  **Access the Container**:
+    ```shell
+    docker-compose exec nvidia-track4 /bin/bash
+    ```
+
+You are now inside the container with a fully configured environment.
+
+> For more detailed instructions, including initial setup, daily usage workflow, and troubleshooting, please refer to our comprehensive **[DOCKER_GUIDE.md](DOCKER_GUIDE.md)**.
+
 ### Quick Start
 We provide several pretrained [Gaussian Splatting models](https://drive.google.com/drive/folders/1EMUOJbyJ2QdeUz8GpPrLEyN4LBvCO3Nx?usp=drive_link) and their corresponding `.json` config files in the `config` directory.
 
-To simulate a reconstructed 3D Gaussian Splatting scene, run the following command:
+To simulate a reconstructed 3D Gaussian Splatting scene, first access the running container, then run the following command:
 ```shell
 python gs_simulation.py --model_path <path to gs model> --output_path <path to output folder> --config <path to json config file> --render_img --compile_video
 ```
 The images and video results will be saved to the specified output_path.
 
-If you want a quick try, run:
+If you want a quick try, run these commands inside the container:
 ```shell
-pip install gdown
 bash download_sample_model.sh
 python gs_simulation.py --model_path ./model/ficus_whitebg-trained/ --output_path output --config ./config/ficus_config.json --render_img --compile_video --white_bg
 ```

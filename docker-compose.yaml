@@ -1,0 +1,21 @@
+services:
+  nvidia-track4:
+    image: nvidia-track4:author
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nvidia_track4_container
+    volumes:
+      - ./:/workspace
+    ports:
+      - "8888:8888"  # Adjust the port mapping as needed
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all  # Adjust GPU visibility as needed
+    command: "/bin/bash -c 'source /etc/bash.bashrc && tail -f /dev/null && /bin/bash'"  # Keep container running
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]

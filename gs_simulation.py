@@ -40,7 +40,8 @@ from utils.render_utils import *
 wp.init()
 wp.config.verify_cuda = True
 
-ti.init(arch=ti.cuda, device_memory_GB=8.0)
+# ti.init(arch=ti.cuda, device_memory_GB=8.0)
+ti.init(arch=ti.cuda, device_memory_GB=4.0)
 
 
 class PipelineParamsNoparse:
