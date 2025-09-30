@@ -92,7 +92,14 @@ if __name__ == "__main__":
         AssertionError("Model path does not exist!")
     if not os.path.exists(args.config):
         AssertionError("Scene config does not exist!")
-    if args.output_path is not None and not os.path.exists(args.output_path):
+    
+    # Set default output path based on config file name if not provided
+    if args.output_path is None:
+        scene_name = os.path.basename(args.config)
+        scene_name = os.path.splitext(scene_name)[0].replace('_config', '')
+        args.output_path = os.path.join("output", scene_name)
+
+    if not os.path.exists(args.output_path):
         os.makedirs(args.output_path)
 
     # load scene config
@@ -110,17 +117,24 @@ if __name__ == "__main__":
         camera_params,
     ) = decode_param_json(args.config)
 
+    # Prefer SPH-style config sections when present
+    cfg_time = config_json.get("time_params", {})
+    cfg_sph = config_json.get("sph_params", {})
+    if "frame_dt" in cfg_time:
+        time_params["frame_dt"] = cfg_time["frame_dt"]
+    if "frame_num" in cfg_time:
+        time_params["frame_num"] = cfg_time["frame_num"]
+    # Unify substep: use SPH timeStepSize if provided
+    if "timeStepSize" in cfg_sph:
+        time_params["substep_dt"] = cfg_sph["timeStepSize"]
+
     # load gaussians
     print("Loading gaussians...")
     model_path = args.model_path
     gaussians = load_checkpoint(model_path)
     pipeline = PipelineParamsNoparse()
     pipeline.compute_cov3D_python = True
-    background = (
-        torch.tensor([1, 1, 1], dtype=torch.float32, device="cuda")
-        if args.white_bg
-        else torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
-    )
+    background = torch.tensor([1, 1, 1], dtype=torch.float32, device="cuda")
 
     # init the scene
     print("Initializing scene and pre-processing...")
@@ -159,6 +173,34 @@ if __name__ == "__main__":
     if args.debug:
         # particle_position_tensor_to_ply(rotated_pos, "./log/rotated_particles.ply")
         pass
+
+    # Apply particle filling if specified in the config
+    if preprocessing_params.get("particle_filling") is not None:
+        filling_params = preprocessing_params["particle_filling"]
+        if filling_params.get("method") == "possion_disk_sampling":
+            print("Applying Possion Disk Sampling for particle filling...")
+            filled_particles = possion_disk_sampling(
+                gaussians,
+                filling_params["radius"],
+                filling_params["num_samples_per_candidate"],
+                mask=mask,
+            )
+            # Apply the same rotation to the newly filled particles
+            rotated_pos = apply_rotations(filled_particles, rotation_matrices)
+            
+            # Since we replaced the particles, we need to regenerate other attributes
+            # For now, let's create dummy values for cov, opacity, shs
+            num_filled = rotated_pos.shape[0]
+            # Use a smaller covariance for filled particles to represent them as small spheres
+            init_cov = torch.eye(3, device="cuda").unsqueeze(0).repeat(num_filled, 1, 1) * (filling_params["radius"]**2)
+            init_opacity = torch.ones(num_filled, 1, device="cuda") * 0.99
+            # Use simple white color for filled particles
+            init_shs = torch.zeros(num_filled, 1, 3, device="cuda")
+            init_shs[:, 0, 0] = 0.28209479177387814 # SH basis for white color
+            init_shs[:, 0, 1] = 0.28209479177387814
+            init_shs[:, 0, 2] = 0.28209479177387814
+            print(f"Filled with {num_filled} particles.")
+
 
     # select a sim area and save params of unslected particles
     unselected_pos, unselected_cov, unselected_opacity, unselected_shs = (
@@ -249,25 +291,26 @@ if __name__ == "__main__":
     if args.debug:
         print("check *.ply files to see if it's ready for simulation")
 
-    # camera setting
-    mpm_space_viewpoint_center = (
-        torch.tensor(camera_params["mpm_space_viewpoint_center"]).reshape((1, 3)).cuda()
-    )
-    mpm_space_vertical_upward_axis = (
-        torch.tensor(camera_params["mpm_space_vertical_upward_axis"])
-        .reshape((1, 3))
-        .cuda()
-    )
-    (
-        viewpoint_center_worldspace,
-        observant_coordinates,
-    ) = get_center_view_worldspace_and_observant_coordinate(
-        mpm_space_viewpoint_center,
-        mpm_space_vertical_upward_axis,
-        rotation_matrices,
-        scale_origin,
-        original_mean_pos,
-    )
+    # camera setting (SPH domain -> world)
+    # SPH target center: domain center
+    sph_center = 0.5 * (domain_start_tensor + domain_end_tensor)
+    # Map SPH point to Gaussian world (inverse of earlier mapping)
+    def sph_point_to_world(p: torch.Tensor) -> torch.Tensor:
+        norm01_r = (p - domain_start_tensor) / domain_size_tensor
+        norm_centered = norm01_r - 0.5
+        return apply_inverse_rotations(
+            undotransform2origin(norm_centered, scale_origin, original_mean_pos),
+            rotation_matrices,
+        )
+
+    center_world_t = sph_point_to_world(sph_center)
+    # SPH up is +Y
+    sph_up = torch.tensor([[0.0, 1.0, 0.0]], device="cuda", dtype=center_world_t.dtype)
+    up_world_t = sph_point_to_world(sph_center + sph_up)
+    world_space_vertical_axis = (up_world_t - center_world_t).squeeze(0)
+    viewpoint_center_worldspace = center_world_t.squeeze(0).detach().cpu().numpy()
+    vertical, h1, h2 = generate_local_coord(world_space_vertical_axis.detach().cpu().numpy())
+    observant_coordinates = np.column_stack((h1, h2, vertical))
 
     # run the simulation
     if args.output_ply or args.output_h5:
