@@ -1,0 +1,44 @@
+{
+    "preprocessing_params": {
+        "opacity_threshold": 0.02,
+        "rotation_degree": [0.0],
+        "rotation_axis": [0],
+        "scale": 1.0,
+        "sim_area": null,
+        "particle_filling": null
+    },
+    "time_params": {
+        "substep_dt": 1e-4,
+        "frame_dt": 0.016,
+        "frame_num": 3000
+    },
+    "sph_params": {
+        "simulationMethod": 2,
+        "particleRadius": 0.02,
+        "domainStart": [0, 0, 0],
+        "domainEnd": [2, 2, 2],
+        "density0": 1000.0,
+        "gravitation": [0.0, -9.8, 0.0],
+        "timeStepSize": 1e-4
+    },
+    "boundary_conditions": [
+        {
+            "type": "bounding_box",
+            "point": [1.0, 1.0, 0.5],
+            "size": [2.0, 2.0, 1.0]
+        }
+    ],
+    "camera_params": {
+        "mpm_space_vertical_upward_axis": [0,0,1],
+        "mpm_space_viewpoint_center": [0.95,1.07,1],
+        "default_camera_index": -1,
+        "show_hint": false,
+        "init_azimuthm": -36.7,
+        "init_elevation": 8.96,
+        "init_radius": 4.11,
+        "move_camera": true,
+        "delta_a": 0.4,
+        "delta_e": 0.0,
+        "delta_r": 0.0
+    }
+}

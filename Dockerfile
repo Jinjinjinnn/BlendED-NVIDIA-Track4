@@ -136,8 +136,11 @@ RUN python3 -m pip install omegaconf
 # Install packages from the root requirements.txt
 RUN python3 -m pip install -r /workspace/requirements.txt
 
+# Install SPH_Taichi dependencies
+RUN python3 -m pip install -r /workspace/SPH_Taichi/requirements.txt
+
 # Set target CUDA architectures to avoid auto-detection errors during build
-ENV TORCH_CUDA_ARCH_LIST="7.5;8.6"
+ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6"
 
 # Manually build and install the submodules
 RUN cd /workspace/gaussian-splatting/submodules/diff-gaussian-rasterization && python setup.py build_ext --inplace

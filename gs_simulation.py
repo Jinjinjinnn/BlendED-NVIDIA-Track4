@@ -23,10 +23,14 @@ from gaussian_renderer import render, GaussianModel
 from utils.system_utils import searchForMaxIteration
 from utils.graphics_utils import focal2fov
 
+# SPH dependencies
+from SPH_Taichi.particle_system import ParticleSystem
+from SPH_Taichi.config_builder import SimConfig
+
 # MPM dependencies
-from mpm_solver_warp.engine_utils import *
-from mpm_solver_warp.mpm_solver_warp import MPM_Simulator_WARP
-import warp as wp
+# from mpm_solver_warp.engine_utils import *
+# from mpm_solver_warp.mpm_solver_warp import MPM_Simulator_WARP
+# import warp as wp
 
 # Particle filling dependencies
 from particle_filling.filling import *
@@ -36,11 +40,14 @@ from utils.decode_param import *
 from utils.transformation_utils import *
 from utils.camera_view_utils import *
 from utils.render_utils import *
+from utils.sph_gaussian_converter import SPHGaussianConverter
 
-wp.init()
-wp.config.verify_cuda = True
+# wp.init()
+# wp.config.verify_cuda = True
 
-# ti.init(arch=ti.cuda, device_memory_GB=8.0)
+# We need to initialize Taichi before using any of its functionalities.
+# The SPH_Taichi modules rely on Taichi fields, so ti.init() must be called.
+import taichi as ti
 ti.init(arch=ti.cuda, device_memory_GB=4.0)
 
 
@@ -90,6 +97,11 @@ if __name__ == "__main__":
 
     # load scene config
     print("Loading scene config...")
+    # The decode_param_json is not fully compatible with the new SPH config.
+    # We will load the json manually and then initialize SimConfig.
+    with open(args.config, 'r') as f:
+        config_json = json.load(f)
+
     (
         material_params,
         bc_params,
@@ -121,7 +133,9 @@ if __name__ == "__main__":
     init_shs = params["shs"]
 
     # throw away low opacity kernels
-    mask = init_opacity[:, 0] > preprocessing_params["opacity_threshold"]
+    mask = (
+        init_opacity.squeeze(-1) >= preprocessing_params["opacity_threshold"]
+    ).cpu()
     init_pos = init_pos[mask, :]
     init_cov = init_cov[mask, :]
     init_opacity = init_opacity[mask, :]
@@ -132,10 +146,10 @@ if __name__ == "__main__":
     if args.debug:
         if not os.path.exists("./log"):
             os.makedirs("./log")
-        particle_position_tensor_to_ply(
-            init_pos,
-            "./log/init_particles.ply",
-        )
+        # particle_position_tensor_to_ply(
+        #     init_pos,
+        #     "./log/init_particles.ply",
+        # )
     rotation_matrices = generate_rotation_matrices(
         torch.tensor(preprocessing_params["rotation_degree"]),
         preprocessing_params["rotation_axis"],
@@ -143,7 +157,8 @@ if __name__ == "__main__":
     rotated_pos = apply_rotations(init_pos, rotation_matrices)
 
     if args.debug:
-        particle_position_tensor_to_ply(rotated_pos, "./log/rotated_particles.ply")
+        # particle_position_tensor_to_ply(rotated_pos, "./log/rotated_particles.ply")
+        pass
 
     # select a sim area and save params of unslected particles
     unselected_pos, unselected_cov, unselected_opacity, unselected_shs = (
@@ -167,92 +182,72 @@ if __name__ == "__main__":
 
         rotated_pos = rotated_pos[mask, :]
         init_cov = init_cov[mask, :]
-        init_opacity = init_opacity[mask, :]
+
         init_shs = init_shs[mask, :]
 
     transformed_pos, scale_origin, original_mean_pos = transform2origin(rotated_pos, preprocessing_params["scale"])
-    transformed_pos = shift2center111(transformed_pos)
+    # Map normalized coords (~[-0.5,0.5]) into SPH domain [domainStart, domainEnd]
+    sph_params = config_json.get("sph_params", {})
+    domain_start = sph_params.get("domainStart", [0.0, 0.0, 0.0])
+    domain_end = sph_params.get("domainEnd", [2.0, 2.0, 2.0])
+    domain_start_tensor = torch.tensor(domain_start, dtype=transformed_pos.dtype, device="cuda").reshape(1, 3)
+    domain_end_tensor = torch.tensor(domain_end, dtype=transformed_pos.dtype, device="cuda").reshape(1, 3)
+    domain_size_tensor = domain_end_tensor - domain_start_tensor
+
+    norm01 = transformed_pos + 0.5
+    transformed_pos = norm01 * domain_size_tensor + domain_start_tensor
+
+    if args.debug:
+        def _aabb(t):
+            return torch.min(t, dim=0).values.detach().cpu().numpy(), torch.max(t, dim=0).values.detach().cpu().numpy()
+        mn0, mx0 = _aabb(init_pos)
+        mn1, mx1 = _aabb(rotated_pos)
+        mn2, mx2 = _aabb(transformed_pos)
+        print(f"AABB init_pos min/max: {mn0} / {mx0}")
+        print(f"AABB rotated_pos min/max: {mn1} / {mx1}")
+        print(f"AABB mapped_pos(min/max) to domain {domain_start}~{domain_end}: {mn2} / {mx2}")
 
     # modify covariance matrix accordingly
     init_cov = apply_cov_rotations(init_cov, rotation_matrices)
     init_cov = scale_origin * scale_origin * init_cov
 
     if args.debug:
-        particle_position_tensor_to_ply(
-            transformed_pos,
-            "./log/transformed_particles.ply",
-        )
-
-    # fill particles if needed
+        # particle_position_tensor_to_ply(
+        #     transformed_pos,
+        #     "./log/transformed_particles.ply",
+        # )
+        pass
+        
     gs_num = transformed_pos.shape[0]
     device = "cuda:0"
-    filling_params = preprocessing_params["particle_filling"]
+    
+    # Init the SPH solver
+    print("Initializing SPH solver...")
+    # Load the config dictionary into SimConfig
+    config = SimConfig(config_dict=config_json) 
+    ps = ParticleSystem(config, GGUI=False, max_num_particles=gs_num) # GGUI is False as we are using Gaussian Splatting renderer
+    
+    # Init the converter
+    converter = SPHGaussianConverter()
 
-    if filling_params is not None:
-        print("Filling internal particles...")
-        mpm_init_pos = fill_particles(
-            pos=transformed_pos,
-            opacity=init_opacity,
-            cov=init_cov,
-            grid_n=filling_params["n_grid"],
-            max_samples=filling_params["max_particles_num"],
-            grid_dx=material_params["grid_lim"] / filling_params["n_grid"],
-            density_thres=filling_params["density_threshold"],
-            search_thres=filling_params["search_threshold"],
-            max_particles_per_cell=filling_params["max_partciels_per_cell"],
-            search_exclude_dir=filling_params["search_exclude_direction"],
-            ray_cast_dir=filling_params["ray_cast_direction"],
-            boundary=filling_params["boundary"],
-            smooth=filling_params["smooth"],
-        ).to(device=device)
+    # Convert Gaussian particles to SPH format
+    sph_data, n_particles = converter.gaussian_to_sph_particles(
+        transformed_pos, init_cov, init_opacity, init_shs
+    )
+    
+    # Add particles to the SPH particle system
+    ps.add_particles(
+        object_id=1, # Use object_id=1 for the main fluid body
+        **sph_data
+    )
 
-        if args.debug:
-            particle_position_tensor_to_ply(mpm_init_pos, "./log/filled_particles.ply")
-    else:
-        mpm_init_pos = transformed_pos.to(device=device)
+    # Build and initialize the SPH solver
+    sph_solver = ps.build_solver()
+    sph_solver.initialize()
 
-    # init the mpm solver
-    print("Initializing MPM solver and setting up boundary conditions...")
-    mpm_init_vol = get_particle_volume(
-        mpm_init_pos,
-        material_params["n_grid"],
-        material_params["grid_lim"] / material_params["n_grid"],
-        unifrom=material_params["material"] == "sand",
-    ).to(device=device)
-
-    if filling_params is not None and filling_params["visualize"] == True:
-        shs, opacity, mpm_init_cov = init_filled_particles(
-            mpm_init_pos[:gs_num],
-            init_shs,
-            init_cov,
-            init_opacity,
-            mpm_init_pos[gs_num:],
-        )
-        gs_num = mpm_init_pos.shape[0]
-    else:
-        mpm_init_cov = torch.zeros((mpm_init_pos.shape[0], 6), device=device)
-        mpm_init_cov[:gs_num] = init_cov
-        shs = init_shs
-        opacity = init_opacity
 
     if args.debug:
         print("check *.ply files to see if it's ready for simulation")
-
-    # set up the mpm solver
-    mpm_solver = MPM_Simulator_WARP(10)
-    mpm_solver.load_initial_data_from_torch(
-        mpm_init_pos,
-        mpm_init_vol,
-        mpm_init_cov,
-        n_grid=material_params["n_grid"],
-        grid_lim=material_params["grid_lim"],
-    )
-    mpm_solver.set_parameters_dict(material_params)
-
-    # Note: boundary conditions may depend on mass, so the order cannot be changed!
-    set_boundary_conditions(mpm_solver, bc_params, time_params)
-
-    mpm_solver.finalize_mu_lam()
 
     # camera setting
     mpm_space_viewpoint_center = (
@@ -280,20 +275,20 @@ if __name__ == "__main__":
         if not os.path.exists(directory_to_save):
             os.makedirs(directory_to_save)
 
-        save_data_at_frame(
-            mpm_solver,
-            directory_to_save,
-            0,
-            save_to_ply=args.output_ply,
-            save_to_h5=args.output_h5,
-        )
+        # save_data_at_frame(
+        #     mpm_solver,
+        #     directory_to_save,
+        #     0,
+        #     save_to_ply=args.output_ply,
+        #     save_to_h5=args.output_h5,
+        # )
 
     substep_dt = time_params["substep_dt"]
     frame_dt = time_params["frame_dt"]
     frame_num = time_params["frame_num"]
     step_per_frame = int(frame_dt / substep_dt)
-    opacity_render = opacity
-    shs_render = shs
+    opacity_render = init_opacity
+    shs_render = init_shs
     height = None
     width = None
     for frame in tqdm(range(frame_num)):
@@ -317,41 +312,47 @@ if __name__ == "__main__":
         )
 
         for step in range(step_per_frame):
-            mpm_solver.p2g2p(frame, substep_dt, device=device)
+            # mpm_solver.p2g2p(frame, substep_dt, device=device)
+            sph_solver.step()
 
         if args.output_ply or args.output_h5:
-            save_data_at_frame(
-                mpm_solver,
-                directory_to_save,
-                frame + 1,
-                save_to_ply=args.output_ply,
-                save_to_h5=args.output_h5,
-            )
+            # save_data_at_frame(
+            #     mpm_solver,
+            #     directory_to_save,
+            #     frame + 1,
+            #     save_to_ply=args.output_ply,
+            #     save_to_h5=args.output_h5,
+            # )
+            pass # TODO: Implement saving for SPH particles if needed
 
         if args.render_img:
-            pos = mpm_solver.export_particle_x_to_torch()[:gs_num].to(device)
-            cov3D = mpm_solver.export_particle_cov_to_torch()
-            rot = mpm_solver.export_particle_R_to_torch()
-            cov3D = cov3D.view(-1, 6)[:gs_num].to(device)
-            rot = rot.view(-1, 3, 3)[:gs_num].to(device)
+            # Export particle data from SPH solver
+            sph_positions_np = ps.x.to_numpy()[:n_particles]
+            
+            # Convert SPH data back to Gaussian format for rendering
+            pos, cov3D, opacity, shs = converter.sph_to_gaussian_particles(sph_positions_np)
 
+            # Revert transformations to render in original world space
+            norm01_r = (pos - domain_start_tensor) / domain_size_tensor
+            norm_centered = norm01_r - 0.5
             pos = apply_inverse_rotations(
                 undotransform2origin(
-                    undoshift2center111(pos), scale_origin, original_mean_pos
+                    norm_centered, scale_origin, original_mean_pos
                 ),
                 rotation_matrices,
             )
+            # Covariance transformation is complex, for now we use the stored one
+            # and only revert scale and rotation
             cov3D = cov3D / (scale_origin * scale_origin)
             cov3D = apply_inverse_cov_rotations(cov3D, rotation_matrices)
-            opacity = opacity_render
-            shs = shs_render
+            
             if preprocessing_params["sim_area"] is not None:
                 pos = torch.cat([pos, unselected_pos], dim=0)
                 cov3D = torch.cat([cov3D, unselected_cov], dim=0)
-                opacity = torch.cat([opacity_render, unselected_opacity], dim=0)
-                shs = torch.cat([shs_render, unselected_shs], dim=0)
+                opacity = torch.cat([opacity, unselected_opacity], dim=0)
+                shs = torch.cat([shs, unselected_shs], dim=0)
 
-            colors_precomp = convert_SH(shs, current_camera, gaussians, pos, rot)
+            colors_precomp = convert_SH(shs, current_camera, gaussians, pos, rotation=None) # Rotation from simulation is not used for color
             rendering, raddi = rasterize(
                 means3D=pos,
                 means2D=init_screen_points,
