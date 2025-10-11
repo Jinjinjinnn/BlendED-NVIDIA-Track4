@@ -1,12 +1,10 @@
 ARG CUDA_VERSION=11.8.0
 ARG OS_VERSION=22.04
-ARG USER_ID=1000
 
 # Define base image.
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${OS_VERSION}
 ARG CUDA_VERSION
 ARG OS_VERSION
-ARG USER_ID
 
 # metainformation
 LABEL org.opencontainers.image.version="0.1.18"
@@ -98,29 +96,17 @@ RUN git clone --branch 3.9.1 https://github.com/colmap/colmap.git --single-branc
     cd ../.. && \
     rm -rf colmap
 
-# Create non-root user and set up environment.
-RUN useradd -m -d /home/user -g root -G sudo -u ${USER_ID} user
-RUN usermod -aG sudo user
-RUN echo "user:user" | chpasswd
-RUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-
 COPY . /workspace
-RUN chown -R user:root /workspace
+WORKDIR /workspace
 
-USER ${USER_ID}
-WORKDIR /home/user
-
-ENV PATH="${PATH}:/home/user/.local/bin"
 SHELL ["/bin/bash", "-c"]
 
 RUN python3 -m pip install --upgrade pip setuptools pathtools promise pybind11
 
-USER root
 RUN CUDA_VER=${CUDA_VERSION%.*} && CUDA_VER=${CUDA_VER//./} && python3 -m pip install \
     torch==2.0.0+cu${CUDA_VER} \
     torchvision==0.15.1+cu${CUDA_VER} \
         --extra-index-url https://download.pytorch.org/whl/cu${CUDA_VER}
-USER ${USER_ID}
 
 RUN git clone --branch v0.6.1 --recursive https://github.com/colmap/pycolmap.git && \
     cd pycolmap && \
@@ -145,6 +131,3 @@ ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6"
 # Manually build and install the submodules
 RUN cd /workspace/gaussian-splatting/submodules/diff-gaussian-rasterization && python setup.py build_ext --inplace
 RUN cd /workspace/gaussian-splatting/submodules/simple-knn && python setup.py build_ext --inplace
-
-USER root
-RUN chsh -s /bin/bash user

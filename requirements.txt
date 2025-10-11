@@ -11,3 +11,5 @@ setuptools==68.0.0
 taichi==1.5.0
 tqdm==4.66.1
 warp_lang==0.10.1
+trimesh
+matplotlib
