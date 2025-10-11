@@ -1,6 +1,3 @@
 [submodule "gaussian-splatting"]
 	path = gaussian-splatting
 	url = https://github.com/graphdeco-inria/gaussian-splatting
-[submodule "SPH_Taichi"]
-	path = SPH_Taichi
-	url = https://github.com/erizmr/SPH_Taichi.git
