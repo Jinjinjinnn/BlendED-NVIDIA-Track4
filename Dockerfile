@@ -129,5 +129,5 @@ RUN python3 -m pip install -r /workspace/SPH_Taichi/requirements.txt
 ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6"
 
 # Manually build and install the submodules
-RUN cd /workspace/gaussian-splatting/submodules/diff-gaussian-rasterization && python setup.py build_ext --inplace
-RUN cd /workspace/gaussian-splatting/submodules/simple-knn && python setup.py build_ext --inplace
+RUN cd /workspace/gaussian-splatting/submodules/simple-knn && pip install .
+RUN cd /workspace/gaussian-splatting/submodules/diff-gaussian-rasterization && pip install .
