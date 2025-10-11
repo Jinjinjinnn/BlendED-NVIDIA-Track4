@@ -32,8 +32,8 @@ class SPHGaussianConverter:
         """
         n_particles = gs_positions.shape[0]
 
-        # Convert torch tensors to numpy arrays, detaching them from the computation graph
-        positions_np = gs_positions.detach().cpu().numpy().astype(np.float32)
+        # Convert torch tensors to numpy arrays
+        positions_np = gs_positions.cpu().numpy().astype(np.float32)
 
         # Create basic SPH particle attributes
         sph_data = {
@@ -53,9 +53,9 @@ class SPHGaussianConverter:
         # Store Gaussian-specific attributes for rendering later
         # These are not used by the SPH physics simulation
         self.gaussian_attributes = {
-            'covariances': gs_covariances.detach(),
-            'opacities': gs_opacities.detach(),
-            'shs': gs_shs.detach()
+            'covariances': gs_covariances,
+            'opacities': gs_opacities,
+            'shs': gs_shs
         }
 
         return sph_data, n_particles
