@@ -50,10 +50,10 @@ if __name__ == "__main__":
     background_color = (0, 0, 0)  # 0xFFFFFF
     particle_color = (1, 1, 1)
 
-    # Invisible objects
-    invisible_objects = config.get_cfg("invisibleObjects")
-    if not invisible_objects:
-        invisible_objects = []
+    # # Invisible objects
+    # invisible_objects = config.get_cfg("invisibleObjects")
+    # if not invisible_objects:
+    #     invisible_objects = []
 
     # Draw the lines for domain
     x_max, y_max, z_max = config.get_cfg("domainEnd")

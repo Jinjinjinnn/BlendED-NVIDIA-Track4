@@ -264,7 +264,7 @@ class SPHBase:
         self.ps.initialize_particle_system()
         self.compute_moving_boundary_volume()
         self.substep()
-        self.solve_rigid_body()
+        # self.solve_rigid_body()
         if self.ps.dim == 2:
             self.enforce_boundary_2D(self.ps.material_fluid)
         elif self.ps.dim == 3:
