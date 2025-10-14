@@ -1,0 +1,44 @@
+# Git directories
+.git
+.gitignore
+.gitattributes
+
+# Exclude git repos in third_party but keep the source code
+third_party/**/.git
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.eggs
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+!README.md
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov

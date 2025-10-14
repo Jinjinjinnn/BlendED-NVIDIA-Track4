@@ -19,6 +19,7 @@ ENV CUDA_HOME="/usr/local/cuda"
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+    libopenblas-dev liblapack-dev \
     build-essential \
     cmake \
     # conda \
@@ -101,7 +102,7 @@ WORKDIR /workspace
 
 SHELL ["/bin/bash", "-c"]
 
-RUN python3 -m pip install --upgrade pip setuptools pathtools promise pybind11
+RUN python3 -m pip install --upgrade pip setuptools pathtools promise pybind11==2.11.1
 
 RUN CUDA_VER=${CUDA_VERSION%.*} && CUDA_VER=${CUDA_VER//./} && python3 -m pip install \
     torch==2.0.0+cu${CUDA_VER} \

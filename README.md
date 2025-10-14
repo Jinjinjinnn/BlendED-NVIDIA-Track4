@@ -16,6 +16,29 @@ Abstract: *We introduce PhysGaussian, a new method that seamlessly integrates ph
 - [2024-02-27] Our paper has been accpetd by CVPR 2024!
 - [2023-12-20] Our [MPM solver code](https://github.com/zeshunzong/warp-mpm) is open sourced!
 
+## Project Structure
+
+```
+BlendED-NVIDIA-Track4/
+├── config/              # Configuration files for different scenes
+├── data/                # Dataset storage
+├── demo/                # Demo videos and samples
+├── docs/                # Documentation
+│   ├── DOCKER_GUIDE.md  # Docker setup and usage guide
+│   ├── README_AUTOMATION.md  # Automation tool quick guide
+│   └── USAGE.md         # Detailed usage instructions
+├── gaussian-splatting/  # 3D Gaussian Splatting (submodule)
+├── mpm_solver_warp/     # MPM solver implementation
+├── particle_filling/    # Particle filling utilities
+├── scripts/             # Shell scripts and automation tools
+│   ├── download_sample_model.sh  # Download pre-trained models
+│   └── train_nerf_scene.sh       # Automated training script
+├── SPH_Taichi/          # SPH solver implementation
+├── utils/               # Utility functions
+├── gs_simulation.py     # Main simulation script
+└── visualize_sph_init.py  # SPH initialization visualizer
+```
+
 ## Cloning the Repository
 This repository uses original gaussian-splatting as a submodule. Use the following command to clone:
 
@@ -44,7 +67,7 @@ This project uses Docker to provide a consistent and easy-to-use development env
 
 You are now inside the container with a fully configured environment.
 
-> For more detailed instructions, including initial setup, daily usage workflow, and troubleshooting, please refer to our comprehensive **[DOCKER_GUIDE.md](DOCKER_GUIDE.md)**.
+> For more detailed instructions, including initial setup, daily usage workflow, and troubleshooting, please refer to our comprehensive **[DOCKER_GUIDE.md](docs/DOCKER_GUIDE.md)**.
 
 ### Quick Start
 We provide several pretrained [Gaussian Splatting models](https://drive.google.com/drive/folders/1EMUOJbyJ2QdeUz8GpPrLEyN4LBvCO3Nx?usp=drive_link) and their corresponding `.json` config files in the `config` directory.
@@ -57,7 +80,7 @@ The images and video results will be saved to the specified output_path.
 
 If you want a quick try, run these commands inside the container:
 ```shell
-bash download_sample_model.sh
+bash scripts/download_sample_model.sh
 python gs_simulation.py --model_path ./model/ficus_whitebg-trained/ --output_path output --config ./config/ficus_sph_config.json --render_img --compile_video --white_bg
 ```
 Hopefully, you will see a video result like this:

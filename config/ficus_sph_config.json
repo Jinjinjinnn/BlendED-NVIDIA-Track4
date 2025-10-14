@@ -27,8 +27,8 @@
     "boundary_conditions": [
         {
             "type": "bounding_box",
-            "point": [1.0, 1.0, 0.5],
-            "size": [2.0, 2.0, 1.0]
+            "point": [1.0, 1.0, 1.0],
+            "size": [2.0, 2.0, 2.0]
         }
     ],
     "camera_params": {
