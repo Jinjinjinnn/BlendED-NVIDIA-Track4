@@ -36,6 +36,76 @@ def decode_sph_param_json(json_file: str) -> SPHSimConfig:
 
     return SPHSimConfig(cfg)
 
+def decode_pipeline_params_json(json_file):
+    import json
+    with open(json_file, "r") as f:
+        sim_params = json.load(f)
+
+    # time params
+    time_params = {
+        "substep_dt": sim_params.get("substep_dt", 1e-4),
+        "frame_dt": sim_params.get("frame_dt", 1e-2),
+        "frame_num": sim_params.get("frame_num", 100),
+    }
+
+    # preprocessing params
+    preprocessing_params = {
+        "opacity_threshold": sim_params.get("opacity_threshold", 0.02),
+        "rotation_degree": sim_params.get("rotation_degree", []),
+        "rotation_axis": sim_params.get("rotation_axis", []),
+        "sim_area": sim_params.get("sim_area", None),
+        "scale": sim_params.get("scale", 1.0),
+        "particle_filling": sim_params.get("particle_filling", None),
+    }
+
+    # nested defaults for particle_filling
+    # TODO: uniform particle filling logic for SPH
+    if preprocessing_params["particle_filling"] is not None:
+        pf = preprocessing_params["particle_filling"]
+        if "n_grid" not in pf:
+            pf["n_grid"] = 100
+        if "density_threshold" not in pf:
+            pf["density_threshold"] = 5.0
+        if "search_threshold" not in pf:
+            pf["search_threshold"] = 3.0
+        if "max_particles_num" not in pf:
+            pf["max_particles_num"] = 2000000
+        if "max_partciels_per_cell" not in pf:
+            pf["max_partciels_per_cell"] = 1
+        if "search_exclude_direction" not in pf:
+            pf["search_exclude_direction"] = 5
+        if "ray_cast_direction" not in pf:
+            pf["ray_cast_direction"] = 4
+        if "boundary" not in pf:
+            pf["boundary"] = None
+        if "smooth" not in pf:
+            pf["smooth"] = False
+        if "visualize" not in pf:
+            pf["visualize"] = False
+
+    # camera params (Y-up)
+    camera_params = {
+        "sph_space_viewpoint_center": sim_params.get("sph_space_viewpoint_center", [1.0, 1.0, 1.0]),
+        "sph_space_vertical_upward_axis": sim_params.get("sph_space_vertical_upward_axis", [0.0, 1.0, 0.0]),
+        "default_camera_index": sim_params.get("default_camera_index", 0),
+        "show_hint": sim_params.get("show_hint", False),
+        "init_azimuthm": sim_params.get("init_azimuthm", None),
+        "init_elevation": sim_params.get("init_elevation", None),
+        "init_radius": sim_params.get("init_radius", None),
+        "delta_a": sim_params.get("delta_a", None),
+        "delta_e": sim_params.get("delta_e", None),
+        "delta_r": sim_params.get("delta_r", None),
+        "move_camera": sim_params.get("move_camera", False),
+    }
+
+    return time_params, preprocessing_params, camera_params
+
+
+def decode_all_params_json(json_file):
+    cfg = decode_sph_param_json(json_file)
+    time_params, preprocessing_params, camera_params = decode_pipeline_params_json(json_file)
+    return cfg, time_params, preprocessing_params, camera_params
+
 
 def compute_sph_domain(cfg: SPHSimConfig, positions, margin_scale: float = 3.0):
     if isinstance(positions, torch.Tensor):

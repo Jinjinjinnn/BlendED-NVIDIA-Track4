@@ -10,7 +10,6 @@ import os
 import numpy as np
 import json
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 
 # Gaussian splatting dependencies
 from utils.sh_utils import eval_sh
@@ -24,8 +23,10 @@ from gaussian_renderer import render, GaussianModel
 from utils.system_utils import searchForMaxIteration
 from utils.graphics_utils import focal2fov
 
-# SPH dependencies
-from SPH_Taichi.sph_engine_utils import *
+# MPM dependencies
+from mpm_solver_warp.engine_utils import *
+from mpm_solver_warp.mpm_solver_warp import MPM_Simulator_WARP
+import warp as wp
 
 # Particle filling dependencies
 from particle_filling.filling import *
@@ -35,6 +36,10 @@ from utils.decode_param import *
 from utils.transformation_utils import *
 from utils.camera_view_utils import *
 from utils.render_utils import *
+
+wp.init()
+wp.config.verify_cuda = True
+
 ti.init(arch=ti.cuda, device_memory_GB=8.0)
 
 
@@ -82,27 +87,15 @@ if __name__ == "__main__":
     if args.output_path is not None and not os.path.exists(args.output_path):
         os.makedirs(args.output_path)
 
-    # scene/output/log directories
-    scene_name = os.path.basename(args.config)
-    if scene_name.endswith("_config.json"):
-        scene_name = scene_name[: -len("_config.json")]
-    else:
-        scene_name = os.path.splitext(scene_name)[0]
-
-    base_output_dir = args.output_path if args.output_path else os.path.join(".", scene_name)
-    os.makedirs(base_output_dir, exist_ok=True)
-
-    log_dir = os.path.join("./log", scene_name)
-    os.makedirs(log_dir, exist_ok=True)
-
     # load scene config
     print("Loading scene config...")
     (
-        cfg,
+        material_params,
+        bc_params,
         time_params,
         preprocessing_params,
         camera_params,
-    ) = decode_all_params_json(args.config)
+    ) = decode_param_json(args.config)
 
     # load gaussians
     print("Loading gaussians...")
@@ -136,8 +129,12 @@ if __name__ == "__main__":
 
     # rorate and translate object
     if args.debug:
-        particle_position_tensor_to_ply(init_pos, os.path.join(log_dir, "init_particles.ply"))
-
+        if not os.path.exists("./log"):
+            os.makedirs("./log")
+        particle_position_tensor_to_ply(
+            init_pos,
+            "./log/init_particles.ply",
+        )
     rotation_matrices = generate_rotation_matrices(
         torch.tensor(preprocessing_params["rotation_degree"]),
         preprocessing_params["rotation_axis"],
@@ -145,7 +142,7 @@ if __name__ == "__main__":
     rotated_pos = apply_rotations(init_pos, rotation_matrices)
 
     if args.debug:
-        particle_position_tensor_to_ply(rotated_pos, os.path.join(log_dir, "rotated_particles.ply"))
+        particle_position_tensor_to_ply(rotated_pos, "./log/rotated_particles.ply")
 
     # select a sim area and save params of unslected particles
     unselected_pos, unselected_cov, unselected_opacity, unselected_shs = (
@@ -182,7 +179,7 @@ if __name__ == "__main__":
     if args.debug:
         particle_position_tensor_to_ply(
             transformed_pos,
-            os.path.join(log_dir, "transformed_particles.ply"),
+            "./log/transformed_particles.ply",
         )
 
     # fill particles if needed
@@ -192,20 +189,13 @@ if __name__ == "__main__":
 
     if filling_params is not None:
         print("Filling internal particles...")
-        # derive grid_dx from bbox of transformed_pos if not provided via MPM params
-        bbox_min, _ = torch.min(transformed_pos, dim=0)
-        bbox_max, _ = torch.max(transformed_pos, dim=0)
-        extent = (bbox_max - bbox_min).detach().cpu().numpy()
-        extent_max = float(max(extent.max(), 1e-6))
-        grid_dx = extent_max / float(filling_params["n_grid"])
-
-        sph_seed_pos = fill_particles(
+        mpm_init_pos = fill_particles(
             pos=transformed_pos,
             opacity=init_opacity,
             cov=init_cov,
             grid_n=filling_params["n_grid"],
             max_samples=filling_params["max_particles_num"],
-            grid_dx=grid_dx,
+            grid_dx=material_params["grid_lim"] / filling_params["n_grid"],
             density_thres=filling_params["density_threshold"],
             search_thres=filling_params["search_threshold"],
             max_particles_per_cell=filling_params["max_partciels_per_cell"],
@@ -216,37 +206,59 @@ if __name__ == "__main__":
         ).to(device=device)
 
         if args.debug:
-            particle_position_tensor_to_ply(sph_seed_pos, os.path.join(log_dir, "filled_particles.ply"))
+            particle_position_tensor_to_ply(mpm_init_pos, "./log/filled_particles.ply")
     else:
-        sph_seed_pos = transformed_pos.to(device=device)
+        mpm_init_pos = transformed_pos.to(device=device)
 
-    # build per-gaussian cov/sh/opacity arrays used for rendering
-    if filling_params is not None and filling_params.get("visualize", False):
-        shs, opacity, sph_init_cov = init_filled_particles(
-            sph_seed_pos[:gs_num],
+    # init the mpm solver
+    print("Initializing MPM solver and setting up boundary conditions...")
+    mpm_init_vol = get_particle_volume(
+        mpm_init_pos,
+        material_params["n_grid"],
+        material_params["grid_lim"] / material_params["n_grid"],
+        unifrom=material_params["material"] == "sand",
+    ).to(device=device)
+
+    if filling_params is not None and filling_params["visualize"] == True:
+        shs, opacity, mpm_init_cov = init_filled_particles(
+            mpm_init_pos[:gs_num],
             init_shs,
             init_cov,
             init_opacity,
-            sph_seed_pos[gs_num:],
+            mpm_init_pos[gs_num:],
         )
-        gs_num = sph_seed_pos.shape[0]
+        gs_num = mpm_init_pos.shape[0]
     else:
-        sph_init_cov = torch.zeros((sph_seed_pos.shape[0], 6), device=device)
-        sph_init_cov[:gs_num] = init_cov
+        mpm_init_cov = torch.zeros((mpm_init_pos.shape[0], 6), device=device)
+        mpm_init_cov[:gs_num] = init_cov
         shs = init_shs
         opacity = init_opacity
 
     if args.debug:
         print("check *.ply files to see if it's ready for simulation")
 
-    # ============ Initialize SPH (DFSPH) ============
-    ctx = initialize_sph_from_positions(cfg, sph_seed_pos, margin_scale=3.0)
-    # camera setting (Y-up default is handled in config; keep interface)
-    sph_space_viewpoint_center = (
-        torch.tensor(camera_params["sph_space_viewpoint_center"]).reshape((1, 3)).cuda()
+    # set up the mpm solver
+    mpm_solver = MPM_Simulator_WARP(10)
+    mpm_solver.load_initial_data_from_torch(
+        mpm_init_pos,
+        mpm_init_vol,
+        mpm_init_cov,
+        n_grid=material_params["n_grid"],
+        grid_lim=material_params["grid_lim"],
     )
-    sph_space_vertical_upward_axis = (
-        torch.tensor(camera_params["sph_space_vertical_upward_axis"])
+    mpm_solver.set_parameters_dict(material_params)
+
+    # Note: boundary conditions may depend on mass, so the order cannot be changed!
+    set_boundary_conditions(mpm_solver, bc_params, time_params)
+
+    mpm_solver.finalize_mu_lam()
+
+    # camera setting
+    mpm_space_viewpoint_center = (
+        torch.tensor(camera_params["mpm_space_viewpoint_center"]).reshape((1, 3)).cuda()
+    )
+    mpm_space_vertical_upward_axis = (
+        torch.tensor(camera_params["mpm_space_vertical_upward_axis"])
         .reshape((1, 3))
         .cuda()
     )
@@ -254,42 +266,36 @@ if __name__ == "__main__":
         viewpoint_center_worldspace,
         observant_coordinates,
     ) = get_center_view_worldspace_and_observant_coordinate(
-        sph_space_viewpoint_center,
-        sph_space_vertical_upward_axis,
+        mpm_space_viewpoint_center,
+        mpm_space_vertical_upward_axis,
         rotation_matrices,
         scale_origin,
         original_mean_pos,
     )
 
-    # initial save
+    # run the simulation
     if args.output_ply or args.output_h5:
-        directory_to_save = base_output_dir
-        os.makedirs(directory_to_save, exist_ok=True)
+        directory_to_save = os.path.join(args.output_path, "simulation_ply")
+        if not os.path.exists(directory_to_save):
+            os.makedirs(directory_to_save)
 
-        save_data_at_frame_sph(
-            ctx,
+        save_data_at_frame(
+            mpm_solver,
             directory_to_save,
             0,
             save_to_ply=args.output_ply,
             save_to_h5=args.output_h5,
-            time_value=0.0,
         )
 
-    # timings
     substep_dt = time_params["substep_dt"]
     frame_dt = time_params["frame_dt"]
     frame_num = time_params["frame_num"]
     step_per_frame = int(frame_dt / substep_dt)
-
-    # cache for rendering
     opacity_render = opacity
     shs_render = shs
     height = None
     width = None
-
-    density_err_hist = []
-    t = tqdm(range(frame_num))
-    for frame in t:
+    for frame in tqdm(range(frame_num)):
         current_camera = get_camera_view(
             model_path,
             default_camera_index=camera_params["default_camera_index"],
@@ -310,33 +316,23 @@ if __name__ == "__main__":
         )
 
         for step in range(step_per_frame):
-            step_sph(ctx, 1)
-
-        # DFSPH final density error reading + tqdm display
-        de = float(getattr(ctx["solver"], "last_avg_density_err", 0.0))
-        density_err_hist.append(de)
-        t.set_postfix({'dens_err': f'{de:.5e}'})
+            mpm_solver.p2g2p(frame, substep_dt, device=device)
 
         if args.output_ply or args.output_h5:
-            save_data_at_frame_sph(
-                ctx,
+            save_data_at_frame(
+                mpm_solver,
                 directory_to_save,
                 frame + 1,
                 save_to_ply=args.output_ply,
                 save_to_h5=args.output_h5,
-                time_value=(frame + 1) * frame_dt,
-                density_error=de,
             )
 
         if args.render_img:
-            # export current positions (simulation space), take only original gaussians
-            pos = export_positions_torch(ctx, device="cuda")[:gs_num]
-            # undo domain-centering shift before world-space inverse transforms
-            pos = pos - ctx["shift"]
-
-            # cov/rot for rendering
-            cov3D = sph_init_cov.view(-1, 6)[:gs_num].to("cuda")
-            rot = None  # SPH does not use per-particle rotation
+            pos = mpm_solver.export_particle_x_to_torch()[:gs_num].to(device)
+            cov3D = mpm_solver.export_particle_cov_to_torch()
+            rot = mpm_solver.export_particle_R_to_torch()
+            cov3D = cov3D.view(-1, 6)[:gs_num].to(device)
+            rot = rot.view(-1, 3, 3)[:gs_num].to(device)
 
             pos = apply_inverse_rotations(
                 undotransform2origin(
@@ -372,23 +368,12 @@ if __name__ == "__main__":
                 width = cv2_img.shape[1] // 2 * 2
             assert args.output_path is not None
             cv2.imwrite(
-                os.path.join(base_output_dir, f"{frame}.png".rjust(8, "0")),
+                os.path.join(args.output_path, f"{frame}.png".rjust(8, "0")),
                 255 * cv2_img,
             )
-
-    if args.debug:
-        xs = np.arange(len(density_err_hist))
-        plt.figure()
-        plt.plot(xs, density_err_hist, lw=1.5)
-        plt.xlabel("frame")
-        plt.ylabel("DFSPH density error")
-        plt.grid(True, ls="--", alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(os.path.join(base_output_dir, "density_error.png"), dpi=150)
-        plt.close()
 
     if args.render_img and args.compile_video:
         fps = int(1.0 / time_params["frame_dt"])
         os.system(
-            f"ffmpeg -framerate {fps} -i {base_output_dir}/%04d.png -c:v libx264 -s {width}x{height} -y -pix_fmt yuv420p {base_output_dir}/output.mp4"
+            f"ffmpeg -framerate {fps} -i {args.output_path}/%04d.png -c:v libx264 -s {width}x{height} -y -pix_fmt yuv420p {args.output_path}/output.mp4"
         )

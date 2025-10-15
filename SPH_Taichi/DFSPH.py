@@ -18,6 +18,7 @@ class DFSPHSolver(SPHBase):
 
         self.max_error_V = 0.1
         self.max_error = 0.05
+        self.last_avg_density_err = 0.0
     
 
     @ti.func
@@ -339,7 +340,8 @@ class DFSPHSolver(SPHBase):
         # Multiply by h, the time step size has to be removed 
         # to make the stiffness value independent 
         # of the time step size
-
+        self.last_avg_density_err = float(avg_density_err)
+        
         # TODO: if warm start
         # also remove for kappa v
     

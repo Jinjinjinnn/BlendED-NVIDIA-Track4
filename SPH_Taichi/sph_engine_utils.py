@@ -67,7 +67,10 @@ def particle_position_tensor_to_ply(position, filename: str):
     writer.export(filename)
 
 
-def save_data_at_frame_sph(ctx_or_ps, dir_name: str, frame: int, save_to_ply: bool = True, save_to_h5: bool = False, time_value: float = None):
+def save_data_at_frame_sph(ctx_or_ps, dir_name: str, frame: int,
+                           save_to_ply: bool = True, save_to_h5: bool = False,
+                           time_value: float = None, density_error: float = None):
+
     ps = ctx_or_ps["ps"] if isinstance(ctx_or_ps, dict) else ctx_or_ps
     os.umask(0)
     os.makedirs(dir_name, 0o777, exist_ok=True)
@@ -87,11 +90,14 @@ def save_data_at_frame_sph(ctx_or_ps, dir_name: str, frame: int, save_to_ply: bo
         f.create_dataset("x", data=x_np)
 
         if time_value is None:
-            # TODO: from caller 
             current_time = np.array([[float(frame)]], dtype=np.float32)
         else:
             current_time = np.array([[float(time_value)]], dtype=np.float32)
         f.create_dataset("time", data=current_time)
 
+        if density_error is not None:
+            f.create_dataset("density_error",
+                             data=np.array([[float(density_error)]], dtype=np.float32))
+                             
         f.close()
         print("save simulation data at frame", frame, "to", fullfilename)
