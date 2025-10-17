@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import h5py
 
-from particle_system import ParticleSystem
+from SPH_Taichi.particle_system import ParticleSystem
 from utils.decode_param import compute_sph_domain
 
 

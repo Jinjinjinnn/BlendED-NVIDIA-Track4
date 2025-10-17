@@ -35,8 +35,14 @@ from utils.decode_param import *
 from utils.transformation_utils import *
 from utils.camera_view_utils import *
 from utils.render_utils import *
-ti.init(arch=ti.cuda, device_memory_GB=8.0)
+ti_arch = ti.cuda if torch.cuda.is_available() else ti.cpu
+mem_frac = float(os.environ.get("TI_MEM_FRAC", "0.4"))
 
+try:
+    ti.init(arch=ti_arch, device_memory_fraction=mem_frac)
+except Exception as e:
+    print(f"[Taichi] init failed with fraction={mem_frac}: {e}")
+    ti.init(arch=ti_arch, device_memory_fraction=0.3)
 
 class PipelineParamsNoparse:
     """Same as PipelineParams but without argument parser."""
@@ -137,30 +143,29 @@ if __name__ == "__main__":
     # rorate and translate object
     if args.debug:
         particle_position_tensor_to_ply(init_pos, os.path.join(log_dir, "init_particles.ply"))
+    
+    deg_list = preprocessing_params.get("rotation_degree", [])
+    axis_list = preprocessing_params.get("rotation_axis", [])
+    scale_val = preprocessing_params.get("scale", 1.0)
+    sim_area = preprocessing_params.get("sim_area", None)
 
     rotation_matrices = generate_rotation_matrices(
-        torch.tensor(preprocessing_params["rotation_degree"]),
-        preprocessing_params["rotation_axis"],
+        torch.tensor(deg_list, device="cuda" if torch.cuda.is_available() else "cpu"),
+        axis_list,
     )
     rotated_pos = apply_rotations(init_pos, rotation_matrices)
 
     if args.debug:
         particle_position_tensor_to_ply(rotated_pos, os.path.join(log_dir, "rotated_particles.ply"))
 
-    # select a sim area and save params of unslected particles
-    unselected_pos, unselected_cov, unselected_opacity, unselected_shs = (
-        None,
-        None,
-        None,
-        None,
-    )
-    if preprocessing_params["sim_area"] is not None:
-        boundary = preprocessing_params["sim_area"]
-        assert len(boundary) == 6
-        mask = torch.ones(rotated_pos.shape[0], dtype=torch.bool).to(device="cuda")
+    # select a sim area and save params of unselected particles
+    unselected_pos = unselected_cov = unselected_opacity = unselected_shs = None
+    if sim_area is not None:
+        assert len(sim_area) == 6
+        mask = torch.ones(rotated_pos.shape[0], dtype=torch.bool, device="cuda")
         for i in range(3):
-            mask = torch.logical_and(mask, rotated_pos[:, i] > boundary[2 * i])
-            mask = torch.logical_and(mask, rotated_pos[:, i] < boundary[2 * i + 1])
+            mask = torch.logical_and(mask, rotated_pos[:, i] > sim_area[2 * i])
+            mask = torch.logical_and(mask, rotated_pos[:, i] < sim_area[2 * i + 1])
 
         unselected_pos = init_pos[~mask, :]
         unselected_cov = init_cov[~mask, :]
@@ -172,7 +177,7 @@ if __name__ == "__main__":
         init_opacity = init_opacity[mask, :]
         init_shs = init_shs[mask, :]
 
-    transformed_pos, scale_origin, original_mean_pos = transform2origin(rotated_pos, preprocessing_params["scale"])
+    transformed_pos, scale_origin, original_mean_pos = transform2origin(rotated_pos, scale_val)
     transformed_pos = shift2center111(transformed_pos)
 
     # modify covariance matrix accordingly
@@ -186,55 +191,38 @@ if __name__ == "__main__":
         )
 
     # fill particles if needed
-    gs_num = transformed_pos.shape[0]
+    gs_num_surface = transformed_pos.shape[0]
+    print(f"[SPH Filling] surface gaussians: {gs_num_surface}")
     device = "cuda:0"
-    filling_params = preprocessing_params["particle_filling"]
+    sph_fill_cfg = preprocessing_params.get("sph_filling", None)
 
-    if filling_params is not None:
-        print("Filling internal particles...")
-        # derive grid_dx from bbox of transformed_pos if not provided via MPM params
-        bbox_min, _ = torch.min(transformed_pos, dim=0)
-        bbox_max, _ = torch.max(transformed_pos, dim=0)
-        extent = (bbox_max - bbox_min).detach().cpu().numpy()
-        extent_max = float(max(extent.max(), 1e-6))
-        grid_dx = extent_max / float(filling_params["n_grid"])
-
-        sph_seed_pos = fill_particles(
-            pos=transformed_pos,
-            opacity=init_opacity,
-            cov=init_cov,
-            grid_n=filling_params["n_grid"],
-            max_samples=filling_params["max_particles_num"],
-            grid_dx=grid_dx,
-            density_thres=filling_params["density_threshold"],
-            search_thres=filling_params["search_threshold"],
-            max_particles_per_cell=filling_params["max_partciels_per_cell"],
-            search_exclude_dir=filling_params["search_exclude_direction"],
-            ray_cast_dir=filling_params["ray_cast_direction"],
-            boundary=filling_params["boundary"],
-            smooth=filling_params["smooth"],
-        ).to(device=device)
-
-        if args.debug:
-            particle_position_tensor_to_ply(sph_seed_pos, os.path.join(log_dir, "filled_particles.ply"))
+    if sph_fill_cfg is not None and sph_fill_cfg.get("enabled", False):
+        seed_pos, shs, opacity, sph_init_cov = sph_uniform_fill_and_seed(
+            surface_pos=transformed_pos.to(device=device),
+            surface_shs=init_shs.to(device=device),
+            surface_cov6=init_cov.to(device=device),
+            surface_opacity=init_opacity.to(device=device),
+            particle_radius=float(cfg.get_cfg("particleRadius")),
+            opacity_threshold=float(sph_fill_cfg.get("opacity_threshold", 0.15)),
+            boundary=sph_fill_cfg.get("boundary", None),
+            device=device,
+            iso_radius_factor=float(sph_fill_cfg.get("iso_radius_factor", 1.0)),
+            k=int(sph_fill_cfg.get("k", 8)),
+            sigma_scale=float(sph_fill_cfg.get("sigma_scale", 1.0)),
+            neighbor_radius_scale=float(sph_fill_cfg.get("neighbor_radius_scale", 3.0)),
+        )
+        sph_seed_pos = seed_pos
+        print(f"[SPH Filling] total particles after filling: {sph_seed_pos.shape[0]}")
     else:
         sph_seed_pos = transformed_pos.to(device=device)
-
-    # build per-gaussian cov/sh/opacity arrays used for rendering
-    if filling_params is not None and filling_params.get("visualize", False):
-        shs, opacity, sph_init_cov = init_filled_particles(
-            sph_seed_pos[:gs_num],
-            init_shs,
-            init_cov,
-            init_opacity,
-            sph_seed_pos[gs_num:],
-        )
-        gs_num = sph_seed_pos.shape[0]
-    else:
-        sph_init_cov = torch.zeros((sph_seed_pos.shape[0], 6), device=device)
-        sph_init_cov[:gs_num] = init_cov
         shs = init_shs
         opacity = init_opacity
+        sph_init_cov = torch.zeros((sph_seed_pos.shape[0], 6), device=device)
+        sph_init_cov[:gs_num_surface] = init_cov.to(device=device)
+        print(f"[SPH Filling] disabled. using surface only: {sph_seed_pos.shape[0]}")
+
+    shs = init_shs
+    opacity = init_opacity
 
     if args.debug:
         print("check *.ply files to see if it's ready for simulation")
@@ -290,20 +278,21 @@ if __name__ == "__main__":
     density_err_hist = []
     t = tqdm(range(frame_num))
     for frame in t:
+        cam = camera_params
         current_camera = get_camera_view(
             model_path,
-            default_camera_index=camera_params["default_camera_index"],
+            default_camera_index=cam.get("default_camera_index", 0),
             center_view_world_space=viewpoint_center_worldspace,
             observant_coordinates=observant_coordinates,
-            show_hint=camera_params["show_hint"],
-            init_azimuthm=camera_params["init_azimuthm"],
-            init_elevation=camera_params["init_elevation"],
-            init_radius=camera_params["init_radius"],
-            move_camera=camera_params["move_camera"],
+            show_hint=cam.get("show_hint", False),
+            init_azimuthm=cam.get("init_azimuthm", None),
+            init_elevation=cam.get("init_elevation", None),
+            init_radius=cam.get("init_radius", None),
+            move_camera=cam.get("move_camera", False),
             current_frame=frame,
-            delta_a=camera_params["delta_a"],
-            delta_e=camera_params["delta_e"],
-            delta_r=camera_params["delta_r"],
+            delta_a=cam.get("delta_a", None),
+            delta_e=cam.get("delta_e", None),
+            delta_r=cam.get("delta_r", None),
         )
         rasterize = initialize_resterize(
             current_camera, gaussians, pipeline, background
@@ -330,40 +319,39 @@ if __name__ == "__main__":
 
         if args.render_img:
             # export current positions (simulation space), take only original gaussians
-            pos = export_positions_torch(ctx, device="cuda")[:gs_num]
+            pos = export_positions_torch(ctx, device="cuda")
             # undo domain-centering shift before world-space inverse transforms
             pos = pos - ctx["shift"]
 
-            # cov/rot for rendering
-            cov3D = sph_init_cov.view(-1, 6)[:gs_num].to("cuda")
-            rot = None  # SPH does not use per-particle rotation
-
-            pos = apply_inverse_rotations(
-                undotransform2origin(
-                    undoshift2center111(pos), scale_origin, original_mean_pos
-                ),
-                rotation_matrices,
-            )
-            cov3D = cov3D / (scale_origin * scale_origin)
-            cov3D = apply_inverse_cov_rotations(cov3D, rotation_matrices)
-            opacity = opacity_render
+            cov3D = sph_init_cov.view(-1, 6).to("cuda")
             shs = shs_render
-            if preprocessing_params["sim_area"] is not None:
-                pos = torch.cat([pos, unselected_pos], dim=0)
-                cov3D = torch.cat([cov3D, unselected_cov], dim=0)
-                opacity = torch.cat([opacity_render, unselected_opacity], dim=0)
-                shs = torch.cat([shs_render, unselected_shs], dim=0)
+            opacity = opacity_render
 
-            colors_precomp = convert_SH(shs, current_camera, gaussians, pos, rot)
+            if preprocessing_params.get("sim_area") is not None:
+                pos     = torch.cat([pos,            unselected_pos.to(pos.device)], dim=0)
+                cov3D   = torch.cat([cov3D,          unselected_cov.to(cov3D.device)], dim=0)
+                shs     = torch.cat([shs,            unselected_shs.to(shs.device)], dim=0)
+                opacity = torch.cat([opacity,        unselected_opacity.to(opacity.device)], dim=0)
+
+            n = pos.shape[0]
+            if shs.shape[0] != n or opacity.shape[0] != n or cov3D.shape[0] != n:
+                print(f"[Render] align sizes pos={n}, shs={shs.shape[0]}, opa={opacity.shape[0]}, cov={cov3D.shape[0]}")
+                m = min(n, shs.shape[0], opacity.shape[0], cov3D.shape[0])
+                pos, shs, opacity, cov3D = pos[:m], shs[:m], opacity[:m], cov3D[:m]
+
+            rot = None
+            init_screen_points_full = torch.zeros_like(pos)
+
+            uniform = preprocessing_params.get("render_uniform_color", None)
+            if uniform is not None:
+                colors_precomp = torch.tensor(uniform, device=pos.device, dtype=torch.float32).view(1,3).repeat(n,1)
+            else:
+                colors_precomp = convert_SH(shs, current_camera, gaussians, pos, rot)
+
             rendering, raddi = rasterize(
-                means3D=pos,
-                means2D=init_screen_points,
-                shs=None,
-                colors_precomp=colors_precomp,
-                opacities=opacity,
-                scales=None,
-                rotations=None,
-                cov3D_precomp=cov3D,
+                means3D=pos, means2D=init_screen_points_full,
+                shs=None, colors_precomp=colors_precomp,
+                opacities=opacity, scales=None, rotations=None, cov3D_precomp=cov3D,
             )
             cv2_img = rendering.permute(1, 2, 0).detach().cpu().numpy()
             cv2_img = cv2.cvtColor(cv2_img, cv2.COLOR_BGR2RGB)

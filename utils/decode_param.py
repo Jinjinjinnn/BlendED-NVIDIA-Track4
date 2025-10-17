@@ -55,33 +55,18 @@ def decode_pipeline_params_json(json_file):
         "rotation_axis": sim_params.get("rotation_axis", []),
         "sim_area": sim_params.get("sim_area", None),
         "scale": sim_params.get("scale", 1.0),
-        "particle_filling": sim_params.get("particle_filling", None),
     }
 
-    # nested defaults for particle_filling
-    # TODO: uniform particle filling logic for SPH
-    if preprocessing_params["particle_filling"] is not None:
-        pf = preprocessing_params["particle_filling"]
-        if "n_grid" not in pf:
-            pf["n_grid"] = 100
-        if "density_threshold" not in pf:
-            pf["density_threshold"] = 5.0
-        if "search_threshold" not in pf:
-            pf["search_threshold"] = 3.0
-        if "max_particles_num" not in pf:
-            pf["max_particles_num"] = 2000000
-        if "max_partciels_per_cell" not in pf:
-            pf["max_partciels_per_cell"] = 1
-        if "search_exclude_direction" not in pf:
-            pf["search_exclude_direction"] = 5
-        if "ray_cast_direction" not in pf:
-            pf["ray_cast_direction"] = 4
-        if "boundary" not in pf:
-            pf["boundary"] = None
-        if "smooth" not in pf:
-            pf["smooth"] = False
-        if "visualize" not in pf:
-            pf["visualize"] = False
+    sph_top = sim_params.get("sph_filling", {}) or {}
+    preprocessing_params["sph_filling"] = {
+        "enabled": bool(sph_top.get("enabled", False)),
+        "opacity_threshold": sph_top.get("opacity_threshold", 0.15),
+        "boundary": sph_top.get("boundary", None),
+        "k": sph_top.get("k", 8),
+        "sigma_scale": sph_top.get("sigma_scale", 1.0),
+        "neighbor_radius_scale": sph_top.get("neighbor_radius_scale", 3.0),
+        "iso_radius_factor": sph_top.get("iso_radius_factor", 1.0),
+    }
 
     # camera params (Y-up)
     camera_params = {

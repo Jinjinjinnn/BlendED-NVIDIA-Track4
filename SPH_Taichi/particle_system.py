@@ -3,9 +3,9 @@ import taichi as ti
 import numpy as np
 import trimesh as tm
 from functools import reduce
-from WCSPH import WCSPHSolver
-from DFSPH import DFSPHSolver
-from scan_single_buffer import parallel_prefix_sum_inclusive_inplace
+from SPH_Taichi.WCSPH import WCSPHSolver
+from SPH_Taichi.DFSPH import DFSPHSolver
+from SPH_Taichi.scan_single_buffer import parallel_prefix_sum_inclusive_inplace
 
 
 # TODO: time_value, init_from_positions (in sph_engin_util.py)
@@ -24,7 +24,7 @@ class ParticleSystem:
         self.dim = len(self.domain_size)
         assert self.dim > 1
         # # Simulation method
-        # self.simulation_method = self.cfg.get_cfg("simulationMethod")
+        self.simulation_method = 4
 
         # Material
         self.material_solid = 0
@@ -46,6 +46,7 @@ class ParticleSystem:
         self.particle_num = ti.field(int, shape=())
         self.particle_num[None] = 0
         self.particle_max_num = int(reserve_particle_num)
+        self.fluid_particle_num = 0
 
         # Object/rigid bookkeeping (no scene objects now)
         self.object_collection = dict()
@@ -365,6 +366,7 @@ class ParticleSystem:
         arr = positions_torch.detach().to(dtype=torch.float32, device="cpu").contiguous().numpy()
         self._init_from_positions_kernel(arr, n, float(density0), int(is_dynamic))
         self.particle_num[None] = n
+        self.fluid_particle_num = int(n)
 
         self.initialize_particle_system()
 
