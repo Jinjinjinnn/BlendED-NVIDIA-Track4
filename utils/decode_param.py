@@ -55,6 +55,10 @@ def decode_pipeline_params_json(json_file):
         "rotation_axis": sim_params.get("rotation_axis", []),
         "sim_area": sim_params.get("sim_area", None),
         "scale": sim_params.get("scale", 1.0),
+        "render_uniform_color": sim_params.get("render_uniform_color", None),
+        "render_sh_tint": sim_params.get("render_sh_tint", None),
+        "render_sh_gain": sim_params.get("render_sh_gain", 1.0),
+        "render_sh_gamma": sim_params.get("render_sh_gamma", 1.0),
     }
 
     sph_top = sim_params.get("sph_filling", {}) or {}

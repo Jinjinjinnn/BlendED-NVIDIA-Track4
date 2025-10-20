@@ -73,6 +73,11 @@ class ParticleSystem:
         self.color = ti.Vector.field(3, dtype=int, shape=nmax)
         self.is_dynamic = ti.field(dtype=int, shape=nmax)
 
+        self.gauss_A   = ti.Matrix.field(3, 3, dtype=float, shape=self.particle_max_num)
+        self.gauss_R   = ti.Matrix.field(3, 3, dtype=float, shape=self.particle_max_num)
+        self.vel_grad  = ti.Matrix.field(3, 3, dtype=float, shape=self.particle_max_num)
+        self.cov_upper = ti.Vector.field(6, dtype=float, shape=self.particle_max_num)
+
         if self.cfg.get_cfg("simulationMethod") == 4:
             self.dfsph_factor = ti.field(dtype=float, shape=nmax)
             self.density_adv = ti.field(dtype=float, shape=nmax)
@@ -369,7 +374,53 @@ class ParticleSystem:
         self.fluid_particle_num = int(n)
 
         self.initialize_particle_system()
+        iso_factor = self.cfg.get_cfg("iso_radius_factor") or 1.0
+        self.init_isotropic_cov(self.particle_radius, iso_factor)
 
+
+    @ti.kernel
+    def _init_iso_cov(self, r_iso2: float):
+        for p in range(self.particle_num[None]):
+            # isotropic covariance A = r^2 I
+            self.gauss_A[p][0, 0] = r_iso2
+            self.gauss_A[p][1, 1] = r_iso2
+            self.gauss_A[p][2, 2] = r_iso2
+            self.gauss_A[p][0, 1] = 0.0; self.gauss_A[p][0, 2] = 0.0
+            self.gauss_A[p][1, 0] = 0.0; self.gauss_A[p][1, 2] = 0.0
+            self.gauss_A[p][2, 0] = 0.0; self.gauss_A[p][2, 1] = 0.0
+            # rotation = I
+            self.gauss_R[p] = ti.Matrix.identity(ti.f32, 3)
+            # upper(Σ)
+            self.cov_upper[p][0] = r_iso2  # xx
+            self.cov_upper[p][1] = 0.0     # xy
+            self.cov_upper[p][2] = 0.0     # xz
+            self.cov_upper[p][3] = r_iso2  # yy
+            self.cov_upper[p][4] = 0.0     # yz
+            self.cov_upper[p][5] = r_iso2  # zz
+
+    @ti.kernel
+    def _write_cov_upper_from_A(self):
+        for p in range(self.particle_num[None]):
+            A = self.gauss_A[p]
+            self.cov_upper[p][0] = A[0, 0]
+            self.cov_upper[p][1] = A[0, 1]
+            self.cov_upper[p][2] = A[0, 2]
+            self.cov_upper[p][3] = A[1, 1]
+            self.cov_upper[p][4] = A[1, 2]
+            self.cov_upper[p][5] = A[2, 2]
+
+
+    def init_isotropic_cov(self, particle_radius: float, iso_radius_factor: float = 1.0):
+        r = float(particle_radius) * float(iso_radius_factor)
+        self._init_iso_cov(r * r)
+
+    def export_particle_cov_to_torch(self) -> torch.Tensor:
+        self._write_cov_upper_from_A()
+        return self.cov_upper.to_torch()
+
+    def export_particle_R_to_torch(self) -> torch.Tensor:
+        R = self.gauss_R.to_torch()  # (N, 3, 3)
+        return R.reshape(-1, 9)
 
     def dump(self, obj_id):
         np_object_id = self.object_id.to_numpy()
@@ -381,3 +432,4 @@ class ParticleSystem:
             'position': np_x,
             'velocity': np_v
         }
+

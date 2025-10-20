@@ -16,8 +16,10 @@ class DFSPHSolver(SPHBase):
 
         self.m_eps = 1e-5
 
-        self.max_error_V = 0.1
-        self.max_error = 0.05
+        self.max_error_V = 5e-3  # 0.5% → 0.005
+        self.max_error   = 1e-2
+        self.min_iter_v  = 2
+        self.min_iter    = 2
         self.last_avg_density_err = 0.0
     
 
@@ -251,11 +253,16 @@ class DFSPHSolver(SPHBase):
             avg_density_err = self.divergence_solver_iteration()
             # Max allowed density fluctuation
             # use max density error divided by time step size
-            eta = 1.0 / self.dt[None] * self.max_error_V * 0.01 * self.density_0
+            eta = self.max_error_V * 0.01 * self.density_0
             # print("eta ", eta)
             if avg_density_err <= eta:
                 break
-            m_iterations_v += 1
+            m_iterations_v = 0
+            while m_iterations_v < self.min_iter_v or m_iterations_v < self.m_max_iterations_v:
+                avg_density_err = self.divergence_solver_iteration()
+                if avg_density_err <= eta and m_iterations_v >= self.min_iter_v:
+                    break
+                m_iterations_v += 1
         print(f"DFSPH - iteration V: {m_iterations_v} Avg density err: {avg_density_err}")
 
         # Multiply by h, the time step size has to be removed 
@@ -323,17 +330,14 @@ class DFSPHSolver(SPHBase):
 
         self.multiply_time_step(self.ps.dfsph_factor, inv_dt2)
 
-        m_iterations = 0
-
         # Start solver
         avg_density_err = 0.0
 
-        while m_iterations < 1 or m_iterations < self.m_max_iterations:
-            
+        eta = self.max_error * 0.01 * self.density_0
+        m_iterations = 0
+        while m_iterations < self.min_iter or m_iterations < self.m_max_iterations:
             avg_density_err = self.pressure_solve_iteration()
-            # Max allowed density fluctuation
-            eta = self.max_error * 0.01 * self.density_0
-            if avg_density_err <= eta:
+            if avg_density_err <= eta and m_iterations >= self.min_iter:
                 break
             m_iterations += 1
         print(f"DFSPH - iterations: {m_iterations} Avg density Err: {avg_density_err:.4f}")

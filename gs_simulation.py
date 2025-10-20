@@ -95,7 +95,7 @@ if __name__ == "__main__":
     else:
         scene_name = os.path.splitext(scene_name)[0]
 
-    base_output_dir = args.output_path if args.output_path else os.path.join(".", scene_name)
+    base_output_dir = args.output_path if args.output_path else os.path.join("./output", scene_name)
     os.makedirs(base_output_dir, exist_ok=True)
 
     log_dir = os.path.join("./log", scene_name)
@@ -227,6 +227,16 @@ if __name__ == "__main__":
     if args.debug:
         print("check *.ply files to see if it's ready for simulation")
 
+    if args.output_ply:
+        particle_position_tensor_to_ply(
+            transformed_pos,
+            os.path.join(base_output_dir, "init_surface_gaussians.ply"),
+        )
+        particle_position_tensor_to_ply(
+            sph_seed_pos,
+            os.path.join(base_output_dir, "filled_particles_init.ply"),
+        )
+
     # ============ Initialize SPH (DFSPH) ============
     ctx = initialize_sph_from_positions(cfg, sph_seed_pos, margin_scale=3.0)
     # camera setting (Y-up default is handled in config; keep interface)
@@ -298,6 +308,58 @@ if __name__ == "__main__":
             current_camera, gaussians, pipeline, background
         )
 
+        if args.render_img and frame == 0:
+            pos = export_positions_torch(ctx, device="cuda")
+            pos = pos - ctx["shift"]
+
+            cov3D = sph_init_cov.view(-1, 6).to("cuda")
+            shs = shs_render
+            opacity = opacity_render
+
+            if preprocessing_params.get("sim_area") is not None:
+                pos     = torch.cat([pos,            unselected_pos.to(pos.device)], dim=0)
+                cov3D   = torch.cat([cov3D,          unselected_cov.to(cov3D.device)], dim=0)
+                shs     = torch.cat([shs,            unselected_shs.to(shs.device)], dim=0)
+                opacity = torch.cat([opacity,        unselected_opacity.to(opacity.device)], dim=0)
+
+            n = pos.shape[0]
+            if shs.shape[0] != n or opacity.shape[0] != n or cov3D.shape[0] != n:
+                m = min(n, shs.shape[0], opacity.shape[0], cov3D.shape[0])
+                pos, shs, opacity, cov3D = pos[:m], shs[:m], opacity[:m], cov3D[:m]
+
+            uniform = preprocessing_params.get("render_uniform_color", None)
+            if uniform is not None:
+                colors_precomp = torch.tensor(uniform, device=pos.device, dtype=torch.float32).view(1,3).repeat(pos.shape[0],1)
+                shs_arg = None
+            else:
+                colors_precomp = None
+                shs_arg = None  # SH는 convert_SH로 처리
+                colors_precomp = convert_SH(shs, current_camera, gaussians, pos, None)
+                tint = preprocessing_params.get("render_sh_tint", None)
+                if tint is not None:
+                    tint_t = torch.tensor(tint, device=pos.device, dtype=torch.float32).view(1,3)
+                    colors_precomp = (colors_precomp * tint_t)
+
+                gain = float(preprocessing_params.get("render_sh_gain", 1.0))
+                gamma = float(preprocessing_params.get("render_sh_gamma", 1.0))
+                if gain != 1.0:
+                    colors_precomp = colors_precomp * gain
+                if gamma != 1.0:
+                    colors_precomp = torch.clamp(colors_precomp, 1e-6, 1.0) ** (1.0 / max(gamma, 1e-6))
+                colors_precomp = colors_precomp.clamp(0.0, 1.0)
+
+            rendering, raddi = rasterize(
+                means3D=pos, means2D=torch.zeros_like(pos),
+                shs=None, colors_precomp=colors_precomp,
+                opacities=opacity, scales=None, rotations=None, cov3D_precomp=cov3D,
+            )
+            cv2_img = rendering.permute(1, 2, 0).detach().cpu().numpy()
+            cv2_img = cv2.cvtColor(cv2_img, cv2.COLOR_BGR2RGB)
+            if height is None or width is None:
+                height = cv2_img.shape[0] // 2 * 2
+                width = cv2_img.shape[1] // 2 * 2
+            cv2.imwrite(os.path.join(base_output_dir, f"{0:04d}.png"), 255 * cv2_img)
+
         for step in range(step_per_frame):
             step_sph(ctx, 1)
 
@@ -347,6 +409,18 @@ if __name__ == "__main__":
                 colors_precomp = torch.tensor(uniform, device=pos.device, dtype=torch.float32).view(1,3).repeat(n,1)
             else:
                 colors_precomp = convert_SH(shs, current_camera, gaussians, pos, rot)
+                tint = preprocessing_params.get("render_sh_tint", None)
+                if tint is not None:
+                    tint_t = torch.tensor(tint, device=pos.device, dtype=torch.float32).view(1,3)
+                    colors_precomp = (colors_precomp * tint_t)
+
+                gain = float(preprocessing_params.get("render_sh_gain", 1.0))
+                gamma = float(preprocessing_params.get("render_sh_gamma", 1.0))
+                if gain != 1.0:
+                    colors_precomp = colors_precomp * gain
+                if gamma != 1.0:
+                    colors_precomp = torch.clamp(colors_precomp, 1e-6, 1.0) ** (1.0 / max(gamma, 1e-6))
+                colors_precomp = colors_precomp.clamp(0.0, 1.0)
 
             rendering, raddi = rasterize(
                 means3D=pos, means2D=init_screen_points_full,
@@ -358,9 +432,8 @@ if __name__ == "__main__":
             if height is None or width is None:
                 height = cv2_img.shape[0] // 2 * 2
                 width = cv2_img.shape[1] // 2 * 2
-            assert args.output_path is not None
             cv2.imwrite(
-                os.path.join(base_output_dir, f"{frame}.png".rjust(8, "0")),
+                os.path.join(base_output_dir, f"{frame + 1:04d}.png"),
                 255 * cv2_img,
             )
 
