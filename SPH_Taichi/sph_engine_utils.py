@@ -101,3 +101,9 @@ def save_data_at_frame_sph(ctx_or_ps, dir_name: str, frame: int,
                              
         f.close()
         print("save simulation data at frame", frame, "to", fullfilename)
+
+def make_isotropic_cov(count, radius, iso_factor, device, dtype):
+    r2 = float(radius) * float(iso_factor)
+    r2 = r2 * r2
+    base = torch.tensor([r2, 0.0, 0.0, r2, 0.0, r2], device=device, dtype=dtype)
+    return base.view(1, 6).repeat(int(count), 1)

@@ -3,7 +3,6 @@ import taichi as ti
 import numpy as np
 import trimesh as tm
 from functools import reduce
-from SPH_Taichi.WCSPH import WCSPHSolver
 from SPH_Taichi.DFSPH import DFSPHSolver
 from SPH_Taichi.scan_single_buffer import parallel_prefix_sum_inclusive_inplace
 
@@ -114,9 +113,7 @@ class ParticleSystem:
 
     def build_solver(self):
         solver_type = self.cfg.get_cfg("simulationMethod")
-        if solver_type == 0:
-            return WCSPHSolver(self)
-        elif solver_type == 4:
+        if solver_type == 4:
             return DFSPHSolver(self)
         else:
             raise NotImplementedError(f"Solver type {solver_type} has not been implemented.")

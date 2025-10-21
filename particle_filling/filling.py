@@ -18,7 +18,7 @@ def uniform_fill_sph(
     assert surface_opacity.ndim == 2 and surface_opacity.shape[1] == 1
     if device is None:
         device = surface_pos.device
-    spacing = float(2.0 * particle_radius)
+    spacing = float(4.0 * particle_radius)
     sigma = float(sigma_scale * particle_radius)
     r_neighbor = float(neighbor_radius_scale * spacing)
 

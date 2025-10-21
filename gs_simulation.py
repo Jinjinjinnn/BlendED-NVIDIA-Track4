@@ -213,6 +213,24 @@ if __name__ == "__main__":
         )
         sph_seed_pos = seed_pos
         print(f"[SPH Filling] total particles after filling: {sph_seed_pos.shape[0]}")
+
+        sur_keep = float(sph_fill_cfg.get("surface_keep_ratio", 1.0))
+        int_keep = float(sph_fill_cfg.get("interior_keep_ratio", 1.0))
+
+        if sur_keep < 1.0 or int_keep < 1.0:
+            Nsurf = int(gs_num_surface)
+            Nall  = int(sph_seed_pos.shape[0])
+            dev = sph_seed_pos.device
+            mask = torch.cat([
+                torch.rand(Nsurf, device=dev) < sur_keep,
+                torch.rand(Nall - Nsurf, device=dev) < int_keep
+            ], dim=0)
+
+            sph_seed_pos = sph_seed_pos[mask]
+            shs          = shs[mask]
+            opacity      = opacity[mask]
+            sph_init_cov = sph_init_cov[mask]
+            print(f"[SPH] subsample: {int(mask.sum())} / {Nall}")
     else:
         sph_seed_pos = transformed_pos.to(device=device)
         shs = init_shs
@@ -221,8 +239,8 @@ if __name__ == "__main__":
         sph_init_cov[:gs_num_surface] = init_cov.to(device=device)
         print(f"[SPH Filling] disabled. using surface only: {sph_seed_pos.shape[0]}")
 
-    shs = init_shs
-    opacity = init_opacity
+    # shs = init_shs
+    # opacity = init_opacity
 
     if args.debug:
         print("check *.ply files to see if it's ready for simulation")
@@ -248,16 +266,22 @@ if __name__ == "__main__":
         .reshape((1, 3))
         .cuda()
     )
-    (
-        viewpoint_center_worldspace,
-        observant_coordinates,
-    ) = get_center_view_worldspace_and_observant_coordinate(
-        sph_space_viewpoint_center,
-        sph_space_vertical_upward_axis,
-        rotation_matrices,
-        scale_origin,
-        original_mean_pos,
-    )
+    # (
+    #     viewpoint_center_worldspace,
+    #     observant_coordinates,
+    # ) = get_center_view_worldspace_and_observant_coordinate(
+    #     sph_space_viewpoint_center,
+    #     sph_space_vertical_upward_axis,
+    #     rotation_matrices,
+    #     scale_origin,
+    #     original_mean_pos,
+    # )
+
+    sph_center_np = np.squeeze(sph_space_viewpoint_center.detach().cpu().numpy(), 0)
+    sph_up_np = np.squeeze(sph_space_vertical_upward_axis.detach().cpu().numpy(), 0)
+    vertical, h1, h2 = generate_local_coord(sph_up_np)
+    viewpoint_center_worldspace = sph_center_np
+    observant_coordinates = np.column_stack((h1, h2, vertical))
 
     # initial save
     if args.output_ply or args.output_h5:
@@ -312,20 +336,23 @@ if __name__ == "__main__":
             pos = export_positions_torch(ctx, device="cuda")
             pos = pos - ctx["shift"]
 
-            cov3D = sph_init_cov.view(-1, 6).to("cuda")
             shs = shs_render
             opacity = opacity_render
 
             if preprocessing_params.get("sim_area") is not None:
                 pos     = torch.cat([pos,            unselected_pos.to(pos.device)], dim=0)
-                cov3D   = torch.cat([cov3D,          unselected_cov.to(cov3D.device)], dim=0)
                 shs     = torch.cat([shs,            unselected_shs.to(shs.device)], dim=0)
                 opacity = torch.cat([opacity,        unselected_opacity.to(opacity.device)], dim=0)
 
             n = pos.shape[0]
-            if shs.shape[0] != n or opacity.shape[0] != n or cov3D.shape[0] != n:
-                m = min(n, shs.shape[0], opacity.shape[0], cov3D.shape[0])
-                pos, shs, opacity, cov3D = pos[:m], shs[:m], opacity[:m], cov3D[:m]
+            if shs.shape[0] != n or opacity.shape[0] != n:
+                m = min(n, shs.shape[0], opacity.shape[0])
+                pos, shs, opacity = pos[:m], shs[:m], opacity[:m]
+                n = m
+
+            # isotropic covariance per current positions
+            iso_factor = float(preprocessing_params.get("sph_filling", {}).get("iso_radius_factor", 1.0))
+            cov3D = make_isotropic_cov(n, float(cfg.get_cfg("particleRadius")), iso_factor, pos.device, torch.float32)
 
             uniform = preprocessing_params.get("render_uniform_color", None)
             if uniform is not None:
@@ -385,21 +412,24 @@ if __name__ == "__main__":
             # undo domain-centering shift before world-space inverse transforms
             pos = pos - ctx["shift"]
 
-            cov3D = sph_init_cov.view(-1, 6).to("cuda")
             shs = shs_render
             opacity = opacity_render
 
             if preprocessing_params.get("sim_area") is not None:
                 pos     = torch.cat([pos,            unselected_pos.to(pos.device)], dim=0)
-                cov3D   = torch.cat([cov3D,          unselected_cov.to(cov3D.device)], dim=0)
                 shs     = torch.cat([shs,            unselected_shs.to(shs.device)], dim=0)
                 opacity = torch.cat([opacity,        unselected_opacity.to(opacity.device)], dim=0)
 
             n = pos.shape[0]
-            if shs.shape[0] != n or opacity.shape[0] != n or cov3D.shape[0] != n:
-                print(f"[Render] align sizes pos={n}, shs={shs.shape[0]}, opa={opacity.shape[0]}, cov={cov3D.shape[0]}")
-                m = min(n, shs.shape[0], opacity.shape[0], cov3D.shape[0])
-                pos, shs, opacity, cov3D = pos[:m], shs[:m], opacity[:m], cov3D[:m]
+            if shs.shape[0] != n or opacity.shape[0] != n:
+                print(f"[Render] align sizes pos={n}, shs={shs.shape[0]}, opa={opacity.shape[0]}")
+                m = min(n, shs.shape[0], opacity.shape[0])
+                pos, shs, opacity = pos[:m], shs[:m], opacity[:m]
+                n = m
+
+            # isotropic covariance per current positions
+            iso_factor = float(preprocessing_params.get("sph_filling", {}).get("iso_radius_factor", 1.0))
+            cov3D = make_isotropic_cov(n, float(cfg.get_cfg("particleRadius")), iso_factor, pos.device, torch.float32)
 
             rot = None
             init_screen_points_full = torch.zeros_like(pos)
