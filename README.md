@@ -81,7 +81,7 @@ The images and video results will be saved to the specified output_path.
 If you want a quick try, run these commands inside the container:
 ```shell
 bash scripts/download_sample_model.sh
-python gs_simulation.py --model_path ./model/ficus_whitebg-trained/ --output_path output --config ./config/ficus_sph_config.json --render_img --compile_video --white_bg
+python gs_simulation.py --model_path ./model/ficus_whitebg-trained/ --config ./config/ficus_sph_config.json --render_img --compile_video --white_bg --output_ply
 ```
 Hopefully, you will see a video result like this:
 

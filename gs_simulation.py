@@ -283,11 +283,42 @@ if __name__ == "__main__":
     viewpoint_center_worldspace = sph_center_np
     observant_coordinates = np.column_stack((h1, h2, vertical))
 
-    # initial save
+    cam = camera_params
+    current_camera = get_camera_view(
+        model_path,
+        default_camera_index=cam.get("default_camera_index", 0),
+        center_view_world_space=viewpoint_center_worldspace,
+        observant_coordinates=observant_coordinates,
+        show_hint=cam.get("show_hint", False),
+        init_azimuthm=cam.get("init_azimuthm", None),
+        init_elevation=cam.get("init_elevation", None),
+        init_radius=cam.get("init_radius", None),
+        move_camera=False,
+        current_frame=0,
+        delta_a=cam.get("delta_a", None),
+        delta_e=cam.get("delta_e", None),
+        delta_r=cam.get("delta_r", None),
+    )
+
+    pos0 = export_positions_torch(ctx, device="cuda") - ctx["shift"]
+
+    shs0 = shs  # filled 이후 shs_all
+    colors0 = convert_SH(shs0, current_camera, gaussians, pos0, None)
+    tint = preprocessing_params.get("render_sh_tint", None)
+    if tint is not None:
+        tint_t = torch.tensor(tint, device=pos0.device, dtype=torch.float32).view(1, 3)
+        colors0 = colors0 * tint_t
+    gain = float(preprocessing_params.get("render_sh_gain", 1.0))
+    gamma = float(preprocessing_params.get("render_sh_gamma", 1.0))
+    if gain != 1.0:
+        colors0 = colors0 * gain
+    if gamma != 1.0:
+        colors0 = torch.clamp(colors0, 1e-6, 1.0) ** (1.0 / max(gamma, 1e-6))
+    colors0 = colors0.clamp(0.0, 1.0)
+
     if args.output_ply or args.output_h5:
         directory_to_save = base_output_dir
         os.makedirs(directory_to_save, exist_ok=True)
-
         save_data_at_frame_sph(
             ctx,
             directory_to_save,
@@ -295,6 +326,8 @@ if __name__ == "__main__":
             save_to_ply=args.output_ply,
             save_to_h5=args.output_h5,
             time_value=0.0,
+            colors_rgb=colors0,
+            pos_override=pos0,
         )
 
     # timings
