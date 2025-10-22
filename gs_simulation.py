@@ -256,7 +256,7 @@ if __name__ == "__main__":
         )
 
     # ============ Initialize SPH (DFSPH) ============
-    ctx = initialize_sph_from_positions(cfg, sph_seed_pos, margin_scale=3.0)
+    ctx = initialize_sph_from_positions(cfg, sph_seed_pos, margin_scale=2.0)
     # camera setting (Y-up default is handled in config; keep interface)
     sph_space_viewpoint_center = (
         torch.tensor(camera_params["sph_space_viewpoint_center"]).reshape((1, 3)).cuda()

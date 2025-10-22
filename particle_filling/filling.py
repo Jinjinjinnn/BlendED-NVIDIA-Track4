@@ -85,28 +85,44 @@ def init_filled_particles(
     particle_radius: float,
     iso_radius_factor: float = 1.0,
 ):
-
     assert pos.ndim == 2 and pos.shape[1] == 3
     assert new_pos.ndim == 2 and new_pos.shape[1] == 3
     dev = pos.device
     if new_pos.shape[0] == 0:
         return shs, opacity, cov
 
-    # closest index
-    d2 = torch.cdist(new_pos, pos, p=2.0).pow(2)   # (Nn,Ns)
-    idx = torch.argmin(d2, dim=1)                  # (Nn,)
+    Ns = int(pos.shape[0])
+    Nn = int(new_pos.shape[0])
 
-    new_shs = shs[idx]                             # (Nn,C,3)
-    new_opacity = opacity[idx]                     # (Nn,1)
+    use_half = (dev.type == "cuda" and pos.dtype == torch.float32)
+    pos_cast = pos.half() if use_half else pos
+    new_pos_cast = new_pos.half() if use_half else new_pos
 
-    # isotrophic cov
+    target_elems = 60_000_000
+    B = max(1, target_elems // max(Ns, 1))
+
+    idx_chunks = []
+    for s in range(0, Nn, B):
+        e = min(Nn, s + B)
+        d = torch.cdist(new_pos_cast[s:e], pos_cast, p=2.0)  # (b, Ns)
+        idx_chunks.append(torch.argmin(d, dim=1))
+        del d
+        if dev.type == "cuda":
+            torch.cuda.empty_cache()
+
+    idx = torch.cat(idx_chunks, dim=0)  # (Nn,)
+
+    new_shs = shs[idx]                  # (Nn,C,3)
+    new_opacity = opacity[idx]          # (Nn,1)
+
+    # isotropic cov
     r_iso2 = float(iso_radius_factor * particle_radius) ** 2
     iso_cov6 = torch.tensor([r_iso2, 0.0, 0.0, r_iso2, 0.0, r_iso2], device=dev, dtype=cov.dtype)
     new_cov = iso_cov6.unsqueeze(0).repeat(new_pos.shape[0], 1)  # (Nn,6)
 
-    concat_shs = torch.cat([shs, new_shs], dim=0)                 # (Ns+Nn,C,3)
-    concat_opacity = torch.cat([opacity, new_opacity], dim=0)     # (Ns+Nn,1)
-    concat_cov6 = torch.cat([cov, new_cov], dim=0)                # (Ns+Nn,6)
+    concat_shs = torch.cat([shs, new_shs], dim=0)               # (Ns+Nn,C,3)
+    concat_opacity = torch.cat([opacity, new_opacity], dim=0)   # (Ns+Nn,1)
+    concat_cov6 = torch.cat([cov, new_cov], dim=0)              # (Ns+Nn,6)
     return concat_shs, concat_opacity, concat_cov6
 
 

@@ -1,162 +1,182 @@
-# PhysGaussian: Physics-Integrated 3D Gaussians for Generative Dynamics
+## Gaussian SPH Fluid: Physics‑integrated 3D Gaussians for SPH Fluid Dynamics
 
-### [[Project Page](https://xpandora.github.io/PhysGaussian/)] [[arXiv](https://arxiv.org/abs/2311.12198)] [[Video](https://www.youtube.com/watch?v=V96GfcMUH2Q)]
+<p align="center">
+  <img src="_resources/method_overview.png" alt="Method Overview">
+</p>
 
-Tianyi Xie<sup>1</sup>\*, Zeshun Zong<sup>1</sup>\*, Yuxing Qiu<sup>1</sup>\*, Xuan Li<sup>1</sup>\*, Yutao Feng<sup>2,3</sup>, Yin Yang<sup>3</sup>, Chenfanfu Jiang<sup>1</sup><br>
-<sup>1</sup>University of California, Los Angeles, <sup>2</sup>Zhejiang University, <sup>3</sup>University of Utah <br>
-*Equal contributions
+This repository turns reconstructed 3D Gaussian splats directly into SPH fluid particles, simulates them using a Taichi‑based DFSPH solver, and renders the results with the same Gaussian representation. Colors are obtained from SH coefficients, and isotropic covariances are synthesized per frame for rasterization. In short: what you see is what you simulate.
 
-![teaser-1.jpg](_resources/teaser-1.jpg)
+- **Unified representation**: reconstruction, simulation, and rendering all share 3D Gaussians
+- **DFSPH solver**: GPU‑accelerated density‑constraint SPH in Taichi
+- **Single‑file configuration**: one JSON controls preprocessing, camera, timing, and SPH
+- **Reproducible environment**: Docker image with CUDA/PyTorch/C++ deps preinstalled
 
-Abstract: *We introduce PhysGaussian, a new method that seamlessly integrates physically grounded Newtonian dynamics within 3D Gaussians to achieve high-quality novel motion synthesis. Employing a customized Material Point Method (MPM), our approach enriches 3D Gaussian kernels with physically meaningful kinematic deformation and mechanical stress attributes, all evolved in line with continuum mechanics principles. A defining characteristic of our method is the seamless integration between physical simulation and visual rendering: both components utilize the same 3D Gaussian kernels as their discrete representations. This negates the necessity for triangle/tetrahedron meshing, marching cubes, ''cage meshes,'' or any other geometry embedding, highlighting the principle of ''what you see is what you simulate (WS2).'' Our method demonstrates exceptional versatility across a wide variety of materials--including elastic entities, plastic metals, non-Newtonian fluids, and granular materials--showcasing its strong capabilities in creating diverse visual content with novel viewpoints and movements.*
-
-## News
-- [2024-03-27] Release a Colab notebook for quick start.[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/165WAoLw2HK4WifsA4Ngqgeke6gJVQXDm?usp=sharing)
-- [2024-03-03] Code Release.
-- [2024-02-27] Our paper has been accpetd by CVPR 2024!
-- [2023-12-20] Our [MPM solver code](https://github.com/zeshunzong/warp-mpm) is open sourced!
+---
 
 ## Project Structure
 
 ```
 BlendED-NVIDIA-Track4/
-├── config/              # Configuration files for different scenes
-├── data/                # Dataset storage
-├── demo/                # Demo videos and samples
-├── docs/                # Documentation
-│   ├── DOCKER_GUIDE.md  # Docker setup and usage guide
-│   ├── README_AUTOMATION.md  # Automation tool quick guide
-│   └── USAGE.md         # Detailed usage instructions
-├── gaussian-splatting/  # 3D Gaussian Splatting (submodule)
-├── mpm_solver_warp/     # MPM solver implementation
-├── particle_filling/    # Particle filling utilities
-├── scripts/             # Shell scripts and automation tools
-│   ├── download_sample_model.sh  # Download pre-trained models
-│   └── train_nerf_scene.sh       # Automated training script
-├── SPH_Taichi/          # SPH solver implementation
-├── utils/               # Utility functions
-├── gs_simulation.py     # Main simulation script
-└── visualize_sph_init.py  # SPH initialization visualizer
+├── _resources/             # figures (method overview)
+├── config/                 # per‑scene JSON configs
+├── demo/                   # demo images/videos
+├── docs/                   # documentation (Docker guide, etc.)
+│   └── DOCKER_GUIDE.md
+├── gaussian-splatting/     # 3DGS code; includes submodules/
+├── model/                  # sample GS models (optional)
+├── output/                 # frames/videos/PLY exports
+├── particle_filling/       # interior uniform filling utilities
+├── scripts/                # helper scripts
+├── SPH_Taichi/             # Taichi DFSPH solver (adapted)
+├── utils/                  # parameter decode, transforms, camera, render
+├── gs_simulation.py        # main entry (preprocess → SPH → render)
+├── Dockerfile
+├── docker-compose.yaml
+└── requirements.txt
 ```
 
-## Cloning the Repository
-This repository uses original gaussian-splatting as a submodule. Use the following command to clone:
+---
 
-```shell
-git clone --recurse-submodules git@github.com:XPandora/PhysGaussian.git
+## Repository Clone
+
+```bash
+git clone https://github.com/Jinjinjinnn/BlendED-NVIDIA-Track4.git
+cd BlendED-NVIDIA-Track4
+# (optional) initialize submodules if needed by your git setup
+git submodule update --init --recursive
 ```
 
-## Setup (Docker ver.)
+---
 
-This project uses Docker to provide a consistent and easy-to-use development environment. All dependencies, including the correct CUDA version, PyTorch, and C++ extensions, are managed within the Docker container.
+## Setup (Docker)
 
-1.  **Prerequisites**: Ensure you have Docker Desktop and the latest NVIDIA drivers installed.
-2.  **Build the Image**: Open a terminal in the project root and run:
-    ```shell
-    docker-compose build
-    ```
-    This command only needs to be run once, or whenever the `Dockerfile` is updated.
-3.  **Run the Container**: Once the build is complete, start the container:
-    ```shell
-    docker-compose up -d
-    ```
-4.  **Access the Container**:
-    ```shell
-    docker-compose exec nvidia-track4 /bin/bash
-    ```
+On Windows with an NVIDIA GPU, you can be up and running quickly. See `docs/DOCKER_GUIDE.md` for full details and troubleshooting.
 
-You are now inside the container with a fully configured environment.
-
-> For more detailed instructions, including initial setup, daily usage workflow, and troubleshooting, please refer to our comprehensive **[DOCKER_GUIDE.md](docs/DOCKER_GUIDE.md)**.
-
-### Quick Start
-We provide several pretrained [Gaussian Splatting models](https://drive.google.com/drive/folders/1EMUOJbyJ2QdeUz8GpPrLEyN4LBvCO3Nx?usp=drive_link) and their corresponding `.json` config files in the `config` directory.
-
-To simulate a reconstructed 3D Gaussian Splatting scene, first access the running container, then run the following command:
-```shell
-python gs_simulation.py --model_path <path to gs model> --output_path <path to output folder> --config <path to json config file> --render_img --compile_video
+1) Build the image (first time only)
+```bash
+docker-compose build
 ```
-The images and video results will be saved to the specified output_path.
 
-If you want a quick try, run these commands inside the container:
-```shell
+2) Start the container
+```bash
+docker-compose up -d
+```
+
+3) Enter the container and move to the workspace
+```bash
+docker-compose exec nvidia-track4 /bin/bash
+cd /workspace
+```
+
+> For logs, pruning, GPU checks, and more helper commands, see `docs/DOCKER_GUIDE.md`.
+
+---
+
+## Quick Start
+
+1) Download a sample GS model (inside the container)
+```bash
 bash scripts/download_sample_model.sh
-python gs_simulation.py --model_path ./model/ficus_whitebg-trained/ --config ./config/ficus_sph_config.json --render_img --compile_video --white_bg --output_ply
 ```
-Hopefully, you will see a video result like this:
+
+2) Run simulation + render first frame + optionally make a video
+```bash
+python gs_simulation.py \
+  --model_path ./model/ficus_whitebg-trained/ \
+  --config ./config/ficus_sph_config.json \
+  --render_img --compile_video --white_bg --output_ply
+```
+
+- Frames: `./output/<scene_name>/*.png`
+- Video: `./output/<scene_name>/output.mp4`
+- Initial exports: `init_surface_gaussians.ply`, `filled_particles_init.ply`
+
+More options:
+- `--output_path <dir>`: choose result directory root
+- `--output_h5`: also export HDF5
+- `--debug`: extra logs and intermediate dumps
 
 <img src="./demo/ficus.gif" width="300"/>
 
-## Custom Dynamics
-To generate custom dynamics, follow these guidelines:
+---
 
-### Gaussian Splatting Reconstruction
-Begin by reconstructing a 3D GS scene as per [Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting).
+## JSON Config
 
-### Data Preprocessing
-Before simulating Gaussian kernels as continuum particles, perform the following preprocessing steps:
-1. Remove Gaussian kernels with low opacity.
-2. Rotate the 3D scene to make it align with the coordinate plane (e.g., bottom surface parallel to the xy plane).
-3. Define a cuboid simulation area.
-4. Center and scale the simulation area within a unit cube.
-5. Optionally, fill internal voids with particles.
+Each scene uses a single `.json` that specifies preprocessing, SPH simulation, camera, and timing/exports. See `config/ficus_sph_config.json` and `config/hotdog_sph_config.json` for concrete examples.
 
-Related parameters, such as rotation axis and degree, should be provided in the config file. For [Nerf Synthetic Dataset](https://drive.google.com/file/d/18JxhpWD-4ZmuFKLzKlAw-w5PpzZxXOcG/view?usp=drive_link), the reconstructed results typically already align with the axis.  For custom datasets, we use 3D software, e.g. [Houdini](https://www.sidefx.com/), to view the distribution of the Gaussian kernels and determine how to rotate and select the scene for simulation readiness.
+### Minimal example
 
-### Config Json File
-A single `.json` file should detail all data preprocessing and simulation parameters for each scene. Key parameters include:
+```json
+{
+  "density0": 1000.0,
+  "viscosity": 0.01,
+  "surface_tension": 0.01,
+  "particleRadius": 0.005,
+  "gravitation": [0.0, -9.81, 0.0],
+  "shift": true,
+  "substep_dt": 0.0001,
 
-- Data Preprocessing Parameters:
-    - `opacity_threshold`: Filters out Gaussian kernels with opacity below this threshold.
-    - `rotation_degree (list)` and `rotation_axis (list)`: Rotate the scene to align with the grid.
-    - `sim_area (list)`: Choose the particles within a bounding box for simulation. The expected format is `[xmin, xmax, ymin, ymax, zmin, zmax]`.
-    - `particle_filling (dict)`: Specify a cubic area to fill internal particles. Tuning ```density_threshold``` and ```search_threshold``` is usually needed for optimal filling results. See more details below.
-- Simulation Parameters:
-    - `material`: Available material types include `jelly`, `metal`, `sand`, `foam`, `snow` and `plasticine`.
-    - `E`: Young's modulus 
-    - `nu`: Poisson's Ratio
-    - `density`: Material density  
-    - `g`: Gravity
-    - `substep_dt`: Simulation time step size 
-    - `n_grid`: MPM grid size
-    - `boundary_conditions (list)`: Boundary conditions can be enforced on either particles or grids, allowing manipulation of Gaussian kernels via external forces.
-- Export Parameters:
-    - `frame_dt`: Duration of each frame
-    - `frame_num`: Total number of frames to export
-    - `default_camera_index`: Camera view index from the training set
+  "opacity_threshold": 0.02,
+  "rotation_degree": [-90.0],
+  "rotation_axis": [0],
+  "scale": 1.0,
 
-Please see sample config files under the `config` folder for reference. 
+  "sph_filling": {
+    "enabled": true,
+    "surface_keep_ratio": 0.4,
+    "interior_keep_ratio": 1.0,
+    "opacity_threshold": 0.4,
+    "boundary": null,
+    "k": 8,
+    "sigma_scale": 1.0,
+    "neighbor_radius_scale": 3.0,
+    "iso_radius_factor": 1.0
+  },
 
-#### Particle Filling
-Optionally, we employ a ray-collision-based method to detect inner grids for particle filling. To use this, specify the following parameters:
+  "sph_space_vertical_upward_axis": [0, 1, 0],
+  "sph_space_viewpoint_center": [0.0, 0.5, 0.0],
+  "default_camera_index": -1,
+  "move_camera": true,
+  "init_azimuthm": -16.3,
+  "init_elevation": 13.96,
+  "init_radius": 5.11,
 
-- `n_grid`: Particle filling grid size.
-- `density_threshold`: Grid cells with density above this threshold will be treated as part of the surface shell.
-- `search_exclude_direction`: A parameter (list of ints) for internal filling condition 1 in PhysGaussian. We won't cast rays in these excluded directions. The mapping between ints and directions is: 0, 1, 2, 3, 4, 5 (+x, -x, +y, -y, +z, -z).
-- `ray_cast_direction`: tA parameter for internal filling condition 2 in PhysGaussian. Along this direction, we will detect the number of collision times. The mapping between ints and directions is the same as `search_exclude_direction`.
-- `max_particles_per cell`: The number of particles to fill for each grid cell.
-- `boundary`: Specify a well-reconstructed cubic area to perform particle filling.
-
-Note: This particle filling algorithm is sensitive to Gaussian kernel distribution and may produce unsatisfying filling results if Gaussians are too noisy.
-
-#### Boundary Condition
-To fix or move the reconstructed object, specify the boundary condition either on grids or particles. Some commonly used boundary condition types include:
-
-- `bounding_box`: Prevents particles from moving outside the MPM simulation area.
-- `cuboid`: Enforces a boundary condition on the grid. Also specify other necessary parameters:
-    - `point`: Center of the cubic area, e.g. `[1, 1, 1]`
-    - `size`: Size of the cubic area (half of the width, height and depth), e.g. `[0.2, 0.2, 0.2]`
-    - `vecloticy`: Velocity assigned to the grids, e.g. `[0, 0, 0]`
-    - `start_time` and `end_time`: Time duration of this boundary condition
-- `enforce_particle_translation`: Enforces a boundary condition on particles with parameters similar to those for grids.
-
-## Citation
-
-```
-@article{xie2023physgaussian,
-      title={PhysGaussian: Physics-Integrated 3D Gaussians for Generative Dynamics}, 
-      author={Xie, Tianyi and Zong, Zeshun and Qiu, Yuxing and Li, Xuan and Feng, Yutao and Yang, Yin and Jiang, Chenfanfu},
-      journal={arXiv preprint arXiv:2311.12198},
-      year={2023},
+  "frame_dt": 0.0333,
+  "frame_num": 300
 }
 ```
+
+### Parameter overview
+
+- **SPH simulation**
+  - **density0, viscosity, surface_tension, particleRadius**: fluid properties
+  - **gravitation**: gravity vector
+  - **shift**: center the particle cluster in the simulation domain
+  - Optional: **domainStart**, **domainEnd** to fix the domain bounds
+
+- **Timing/exports**
+  - **substep_dt**: DFSPH integration substep
+  - **frame_dt / frame_num**: frame interval and number of frames
+
+- **Preprocessing**
+  - **opacity_threshold**: remove low‑opacity Gaussians
+  - **rotation_degree / rotation_axis, scale**: world alignment and scaling
+  - Optional: **sim_area** (AABB), **render_uniform_color**, **render_sh_tint/gain/gamma**
+
+- **Interior filling (SPH Filling)**
+  - **enabled**, **surface_keep_ratio**, **interior_keep_ratio**
+  - **opacity_threshold**, **boundary**, **k**, **sigma_scale**, **neighbor_radius_scale**, **iso_radius_factor**
+
+- **Camera**
+  - **sph_space_viewpoint_center**, **sph_space_vertical_upward_axis**
+  - **default_camera_index**, **move_camera**, **init_***, **delta_a/e/r**, **show_hint**
+
+---
+
+## References
+
+- T. Xie, Z. Zong, Y. Qiu, X. Li, Y. Feng, Y. Yang, and C. Jiang. PhysGaussian: Physics‑integrated 3D Gaussians for generative dynamics. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages 4389–4398, 2024.
+
+- erizmr. SPH Taichi: A high‑performance implementation of SPH in Taichi. GitHub repository, 2025. Available at: https://github.com/erizmr/SPH_Taichi.
+
+

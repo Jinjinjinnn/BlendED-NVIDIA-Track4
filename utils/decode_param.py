@@ -96,7 +96,7 @@ def decode_all_params_json(json_file):
     return cfg, time_params, preprocessing_params, camera_params
 
 
-def compute_sph_domain(cfg: SPHSimConfig, positions, margin_scale: float = 3.0):
+def compute_sph_domain(cfg: SPHSimConfig, positions, margin_scale: float = 2.0):
     if isinstance(positions, torch.Tensor):
         min_pos = positions.min(dim=0).values.detach().cpu().numpy()
         max_pos = positions.max(dim=0).values.detach().cpu().numpy()

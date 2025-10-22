@@ -27,7 +27,7 @@
     },
 
     "sph_space_vertical_upward_axis": [0,1,0],
-    "sph_space_viewpoint_center": [0.0, 0.5, 0.0],
+    "sph_space_viewpoint_center": [0.0, 0.0, 0.0],
     "default_camera_index": -1,
     "show_hint": false,
     "init_azimuthm": -16.3,
@@ -38,6 +38,6 @@
     "delta_e": 0.0,
     "delta_r": 0.0,
 
-    "frame_dt": 0.0333,
-    "frame_num": 500
+    "frame_dt": 0.0666,
+    "frame_num": 250
 }

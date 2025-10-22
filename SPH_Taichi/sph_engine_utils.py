@@ -12,7 +12,7 @@ from SPH_Taichi.particle_system import ParticleSystem
 from utils.decode_param import compute_sph_domain
 
 
-def initialize_sph_from_positions(cfg, positions_torch: torch.Tensor, margin_scale: float = 3.0):
+def initialize_sph_from_positions(cfg, positions_torch: torch.Tensor, margin_scale: float = 2.0):
     assert hasattr(cfg, "get_cfg")
     assert positions_torch.dim() == 2 and positions_torch.shape[1] == 3
 
