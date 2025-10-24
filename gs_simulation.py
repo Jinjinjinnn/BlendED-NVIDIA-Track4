@@ -343,6 +343,8 @@ if __name__ == "__main__":
     width = None
 
     density_err_hist = []
+    divergence_iters_per_frame = []
+    pressure_iters_per_frame = []
     t = tqdm(range(frame_num))
     for frame in t:
         cam = camera_params
@@ -364,6 +366,8 @@ if __name__ == "__main__":
         rasterize = initialize_resterize(
             current_camera, gaussians, pipeline, background
         )
+        frame_pressure_iters = 0
+        frame_div_iters = 0
 
         if args.render_img and frame == 0:
             pos = export_positions_torch(ctx, device="cuda")
@@ -423,9 +427,41 @@ if __name__ == "__main__":
         for step in range(step_per_frame):
             step_sph(ctx, 1)
 
+            if args.debug and frame == 120 and step == 0:
+                dens_seq = list(getattr(ctx["solver"], "last_density_err_iters", []))
+                div_seq  = list(getattr(ctx["solver"], "last_divergence_err_iters", []))
+
+                if len(dens_seq) > 0:
+                    xs = np.arange(len(dens_seq))
+                    plt.figure()
+                    plt.plot(xs, dens_seq, lw=1.5)
+                    plt.xlabel("iteration")
+                    plt.ylabel("pressure density error")
+                    plt.grid(True, ls="--", alpha=0.3)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(base_output_dir, "density_error_iters_frame0120.png"), dpi=150)
+                    plt.close()
+
+                if len(div_seq) > 0:
+                    xs = np.arange(len(div_seq))
+                    plt.figure()
+                    plt.plot(xs, div_seq, lw=1.5, color="orange")
+                    plt.xlabel("iteration")
+                    plt.ylabel("divergence error")
+                    plt.grid(True, ls="--", alpha=0.3)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(base_output_dir, "divergence_error_iters_frame0120.png"), dpi=150)
+                    plt.close()
+
+
+            frame_pressure_iters += int(getattr(ctx["solver"], "last_iters_pressure", 0))
+            frame_div_iters      += int(getattr(ctx["solver"], "last_iters_div", 0))
+        
         # DFSPH final density error reading + tqdm display
         de = float(getattr(ctx["solver"], "last_avg_density_err", 0.0))
         density_err_hist.append(de)
+        pressure_iters_per_frame.append(frame_pressure_iters)
+        divergence_iters_per_frame.append(frame_div_iters)
         t.set_postfix({'dens_err': f'{de:.5e}'})
 
         if args.output_ply or args.output_h5:
@@ -501,14 +537,16 @@ if __name__ == "__main__":
             )
 
     if args.debug:
-        xs = np.arange(len(density_err_hist))
+        xs = np.arange(len(pressure_iters_per_frame))
         plt.figure()
-        plt.plot(xs, density_err_hist, lw=1.5)
+        plt.plot(xs, pressure_iters_per_frame, lw=1.5, label="pressure iters/frame")
+        plt.plot(xs, divergence_iters_per_frame, lw=1.5, label="divergence iters/frame")
         plt.xlabel("frame")
-        plt.ylabel("DFSPH density error")
+        plt.ylabel("iterations per frame (sum of substeps)")
+        plt.legend()
         plt.grid(True, ls="--", alpha=0.3)
         plt.tight_layout()
-        plt.savefig(os.path.join(base_output_dir, "density_error.png"), dpi=150)
+        plt.savefig(os.path.join(base_output_dir, "iterations_per_frame.png"), dpi=150)
         plt.close()
 
     if args.render_img and args.compile_video:

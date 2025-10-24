@@ -38,6 +38,6 @@
     "delta_e": 0.0,
     "delta_r": 0.0,
 
-    "frame_dt": 0.0333,
+    "frame_dt": 0.006,
     "frame_num": 500
 }

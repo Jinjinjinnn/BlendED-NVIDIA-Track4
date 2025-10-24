@@ -20,7 +20,12 @@ class DFSPHSolver(SPHBase):
         self.max_error   = 1e-2
         self.min_iter_v  = 2
         self.min_iter    = 2
-        self.last_avg_density_err = 0.0
+
+        self.last_avg_divergence_err = 0.0
+        self.last_density_err_iters = []
+        self.last_divergence_err_iters = []
+        self.last_iters_pressure = 0
+        self.last_iters_div = 0
     
 
     @ti.func
@@ -237,42 +242,34 @@ class DFSPHSolver(SPHBase):
 
 
     def divergence_solve(self):
-        # TODO: warm start 
         # Compute velocity of density change
         self.compute_density_change()
         inv_dt = 1 / self.dt[None]
         self.multiply_time_step(self.ps.dfsph_factor, inv_dt)
 
+        self.last_divergence_err_iters = []
         m_iterations_v = 0
-        
-        # Start solver
         avg_density_err = 0.0
 
-        while m_iterations_v < 1 or m_iterations_v < self.m_max_iterations_v:
-            
-            avg_density_err = self.divergence_solver_iteration()
-            # Max allowed density fluctuation
-            # use max density error divided by time step size
-            eta = self.max_error_V * 0.01 * self.density_0
-            # print("eta ", eta)
-            if avg_density_err <= eta:
-                break
+        # 첫 평가
+        avg_density_err = self.divergence_solver_iteration()
+        self.last_divergence_err_iters.append(float(avg_density_err))
+
+        eta = self.max_error_V * 0.01 * self.density_0
+        if avg_density_err > eta:
             m_iterations_v = 0
             while m_iterations_v < self.min_iter_v or m_iterations_v < self.m_max_iterations_v:
                 avg_density_err = self.divergence_solver_iteration()
+                self.last_divergence_err_iters.append(float(avg_density_err))
                 if avg_density_err <= eta and m_iterations_v >= self.min_iter_v:
                     break
                 m_iterations_v += 1
+
         print(f"DFSPH - iteration V: {m_iterations_v} Avg density err: {avg_density_err}")
-
-        # Multiply by h, the time step size has to be removed 
-        # to make the stiffness value independent 
-        # of the time step size
-
-        # TODO: if warm start
-        # also remove for kappa v
-
         self.multiply_time_step(self.ps.dfsph_factor, self.dt[None])
+
+        self.last_iters_div = int(m_iterations_v)
+        self.last_avg_divergence_err = float(avg_density_err)
 
 
     def divergence_solver_iteration(self):
@@ -323,31 +320,24 @@ class DFSPHSolver(SPHBase):
         inv_dt = 1 / self.dt[None]
         inv_dt2 = 1 / (self.dt[None] * self.dt[None])
 
-        # TODO: warm start
-        
         # Compute rho_adv
         self.compute_density_adv()
-
         self.multiply_time_step(self.ps.dfsph_factor, inv_dt2)
 
-        # Start solver
+        self.last_density_err_iters = []
         avg_density_err = 0.0
-
         eta = self.max_error * 0.01 * self.density_0
         m_iterations = 0
         while m_iterations < self.min_iter or m_iterations < self.m_max_iterations:
             avg_density_err = self.pressure_solve_iteration()
+            self.last_density_err_iters.append(float(avg_density_err))
             if avg_density_err <= eta and m_iterations >= self.min_iter:
                 break
             m_iterations += 1
         print(f"DFSPH - iterations: {m_iterations} Avg density Err: {avg_density_err:.4f}")
-        # Multiply by h, the time step size has to be removed 
-        # to make the stiffness value independent 
-        # of the time step size
+
         self.last_avg_density_err = float(avg_density_err)
-        
-        # TODO: if warm start
-        # also remove for kappa v
+        self.last_iters_pressure = int(m_iterations)
     
     def pressure_solve_iteration(self):
         self.pressure_solve_iteration_kernel()
