@@ -3,8 +3,7 @@ data
 output
 *.ply
 *.pyc
-*.png
-*.jpg
+
 model
 log
 .cursor
