@@ -96,7 +96,7 @@ More options:
 - `--output_h5`: also export HDF5
 - `--debug`: extra logs and intermediate dumps
 
-<img src="./demo/ficus.gif" width="300"/>
+<img src="./demo/output_ficus.gif" width="300"/>
 
 ---
 
