@@ -27,17 +27,17 @@
     },
 
     "sph_space_vertical_upward_axis": [0,1,0],
-    "sph_space_viewpoint_center": [0.0, 0.8, 0.0],
+    "sph_space_viewpoint_center": [-0.1, 1.0, 0.0],
     "default_camera_index": -1,
     "show_hint": false,
-    "init_azimuthm": -16.3,
+    "init_azimuthm": 0,
     "init_elevation": 13.96,
-    "init_radius": 5.11,
-    "move_camera": true,
+    "init_radius": 6.11,
+    "move_camera": false,
     "delta_a": 0.18,
     "delta_e": 0.0,
     "delta_r": 0.0,
 
-    "frame_dt": 0.0333,
+    "frame_dt": 0.01665,
     "frame_num": 500
 }
