@@ -1,7 +1,7 @@
 ## Gaussian SPH Fluid: Physics‑integrated 3D Gaussians for SPH Fluid Dynamics
 
 <p align="center">
-  <img src="_resources/method_overview.png" alt="Method Overview">
+  <img src="resources/method_overview.png" alt="Method Overview">
 </p>
 
 This repository turns reconstructed 3D Gaussian splats directly into SPH fluid particles, simulates them using a Taichi‑based DFSPH solver, and renders the results with the same Gaussian representation. Colors are obtained from SH coefficients, and isotropic covariances are synthesized per frame for rasterization. In short: what you see is what you simulate.
